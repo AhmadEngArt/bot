@@ -1,0 +1,21 @@
+[
+  {
+    "name": "نمونه RSS",
+    "type": "rss",
+    "url": "https://example.com/feed.xml",
+    "limit": 10
+  },
+  {
+    "name": "نمونه کانال تلگرام",
+    "type": "telegram",
+    "channel": "example_channel",
+    "limit": 10
+  },
+  {
+    "name": "نمونه سایت (بدون RSS)",
+    "type": "website",
+    "url": "https://example.com/news",
+    "link_selector": "article h2 a",
+    "limit": 10
+  }
+]
