@@ -12,12 +12,6 @@
     "limit": 10
   },
   {
-    "name": "IranintlTV",
-    "type": "telegram",
-    "channel": "IranintlTV",
-    "limit": 10
-  },
-  {
     "name": "sepah",
     "type": "telegram",
     "channel": "sepah",
@@ -33,6 +27,30 @@
     "name": "kh_mx",
     "type": "telegram",
     "channel": "kh_mx",
+    "limit": 10
+  },
+  {
+    "name": "Farsna",
+    "type": "telegram",
+    "channel": "Farsna",
+    "limit": 10
+  },
+  {
+    "name": "bbcpersian",
+    "type": "telegram",
+    "channel": "bbcpersian",
+    "limit": 10
+  },
+  {
+    "name": "VahidOnline",
+    "type": "telegram",
+    "channel": "VahidOnline",
+    "limit": 10
+  },
+  {
+    "name": "mostanad_COM",
+    "type": "telegram",
+    "channel": "mostanad_COM",
     "limit": 10
   }
 ]
