@@ -51,7 +51,7 @@ jobs:
           SKIP_BACKLOG: ${{ github.event.inputs.skip_backlog == 'true' && 'true' || '' }}
           POST_INTERVAL_MIN: ${{ vars.POST_INTERVAL_MIN }}
           RUN_MINUTES: ${{ vars.RUN_MINUTES }}
-        run: python bot.py
+        run: python -u bot.py
 
       - name: Save state
         if: always()
