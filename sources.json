@@ -15,5 +15,6 @@
   {"name": "akhbarefori", "type": "telegram", "channel": "akhbarefori", "limit": 5},
   {"name": "pe_az", "type": "telegram", "channel": "pe_az", "limit": 3},
   {"name": "DEL_ANGIZ_JAN", "type": "telegram", "channel": "DEL_ANGIZ_JAN", "limit": 3},
-  {"name": "Hesse_Arammesh", "type": "telegram", "channel": "Hesse_Arammesh", "limit": 3}
+  {"name": "Hesse_Arammesh", "type": "telegram", "channel": "Hesse_Arammesh", "limit": 3},
+  {"name": "cafedezhavu", "type": "telegram", "channel": "cafedezhavu", "limit": 3}
 ]
