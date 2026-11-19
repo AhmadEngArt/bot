@@ -157,6 +157,7 @@ def replace_channels(text: str) -> str:
 # نشانه‌های تبلیغ‌های شبکه‌های تبلیغاتی تلگرام
 AD_PATTERNS = [
     re.compile(r"#(?!(?:13|14|19|20)\d\d(?!\d))\d{4,7}(?!\d)"),   # کد تبلیغ مثل #28083 (سال‌ها مثل #1401 نه)
+    re.compile(r"(?:ثبت[ \u200c]?نام|دانلود|نصب|خرید) کن(?:ه)?(?![\w\u200c])"),   # «ثبت‌نام کن/کنه»، نه «کنند»
     re.compile(r"(?:https?://)?(?:www\.)?(?:bo0\.ir|yun\.ir|bit\.ly|b2n\.ir|l1nk\.ir|zaya\.io|"
                r"tinyurl\.com|cutt\.ly|rebrand\.ly|shorturl\.at|t\.co|goo\.gl|is\.gd|s\.id|ln\.run|"
                r"yek\.link|ylnk\.ir|tapsell|yektanet)", re.I),   # لینک کوتاه و شبکه‌های تبلیغاتی
@@ -164,16 +165,41 @@ AD_PATTERNS = [
 AD_PHRASES = [
     "اطلاعات بیشتر در لینک", "لینک زیر", "روی لینک بزن", "همین حالا ثبت", "شانست رو", "شانس خود را",
     "جایزه‌دار", "جایزه دار", "قرعه‌کشی بزرگ", "قرعه کشی بزرگ", "برنده‌ی جایزه", "برنده جایزه",
-    "ثبت‌نام کن", "ثبت نام کن", "دانلود کن", "نصب کن", "همین الان بخر", "خرید کن", "سفارش بده",
+    "همین الان بخر", "سفارش بده",
     "رایگان دریافت", "هدیه بگیر", "کد معرف",
 ]
+
+
+# امتیاز تجاری: هر نشانه امتیاز دارد؛ خبر معمولا ۱-۲ امتیاز دارد، تبلیغ چندتا با هم
+AD_SCORE_WORDS = {
+    "کلیک کن": 2, "همین حالا": 2, "همین الان": 1, "پیشنهاد ویژه": 2, "شرایط ویژه": 2, "فرصت محدود": 2,
+    "فقط امروز": 2, "هدیه": 1, "هدیه جذاب": 2, "جایزه": 1, "رایگان": 1, "مشاوره": 1, "اشتراک": 1,
+    "پکیج": 1, "خرید": 1, "با خرید": 2, "برای خرید": 1, "ثبت نام": 1, "ثبت‌نام": 1, "دعوت از دوستان": 2,
+    "معرفی دوستان": 2, "پاداش": 1, "تومان پاداش": 2, "سود تضمینی": 2, "کسب‌وکار شما": 2, "کسب و کار شما": 2,
+    "انتخاب با شما": 2, "خودت انتخاب کن": 2, "دریافت جزئیات": 2, "اطلاعات بیشتر": 1, "تماس بگیرید": 1,
+    "سفارش": 1, "تخفیف": 1, "٪ تخفیف": 2, "% تخفیف": 2, "اپلیکیشن": 1, "نصب": 1, "دانلود": 1,
+    "سایت": 1, "عضو شو": 2, "لینک": 1, "👇": 1, "🎁": 2, "🔥": 1,
+}
+AD_SCORE_LIMIT = 5
+REFERRAL_URL = re.compile(r"https?://\S+[?&](?:r|ref|referral|invite|inviter|utm_[a-z]+|aff|code)=", re.I)
+
+
+def ad_score(t: str) -> int:
+    score = sum(v for k, v in AD_SCORE_WORDS.items() if k in t)
+    if REFERRAL_URL.search(t):
+        score += 4
+    if re.search(r"https?://(?!t\.me)\S+", t):   # لینک به سایت بیرونی
+        score += 1
+    return score
 
 
 def is_ad(text: str) -> bool:
     t = (text or "").lower()
     if any(k in t for k in AD_KEYWORDS) or any(k in t for k in AD_PHRASES):
         return True
-    return any(p.search(t) for p in AD_PATTERNS)
+    if any(p.search(t) for p in AD_PATTERNS):
+        return True
+    return ad_score(t) >= AD_SCORE_LIMIT
 
 
 PRICE_TICKER_WORDS = ("دلار", "یورو", "طلا", "سکه", "تتر", "usdt", "آبشده", "مثقال", "درهم", "بیت کوین")
@@ -226,9 +252,24 @@ def entry_ts(e):
 ERRORS = {}
 
 
+FAIL_COUNTS = {}
+SOURCE_FAIL_ALERT = 10   # منبع فقط وقتی هشدار می‌دهد که چند بار پشت سر هم خطا بدهد (خطای لحظه‌ای نه)
+
+
 def report_error(key: str, msg: str):
     ERRORS[key] = msg[:300]
     print(f"ALERT: {msg[:300]}")
+
+
+def source_failed(key: str, msg: str):
+    FAIL_COUNTS[key] = FAIL_COUNTS.get(key, 0) + 1
+    print(f"{key} failed ({FAIL_COUNTS[key]} in a row): {msg[:150]}")
+    if FAIL_COUNTS[key] >= SOURCE_FAIL_ALERT:
+        report_error(key, f"{msg} ({FAIL_COUNTS[key]} بار پشت سر هم)")
+
+
+def source_ok(key: str):
+    FAIL_COUNTS.pop(key, None)
 
 
 def send_alerts(state):
@@ -306,6 +347,15 @@ def extract_media(msg):
     return uniq
 
 
+def has_missing_media(msg, media) -> bool:
+    """آیا پست ویدیو یا فایلی دارد که در صفحه‌ی وب قابل دانلود نیست؟"""
+    if msg.select_one(".message_media_not_supported, .tgme_widget_message_document"):
+        return True
+    players = msg.select(".tgme_widget_message_video_player, .tgme_widget_message_roundvideo_player")
+    videos = [m for m in media if m["type"] == "video"]
+    return len(players) > len(videos)
+
+
 def fetch_telegram_channel(src):
     """Simple mode: public channels only, via the t.me/s/<name> web preview."""
     name = src["channel"].lstrip("@")
@@ -329,6 +379,11 @@ def fetch_telegram_channel(src):
             continue
         text = replace_channels(text)
         media = extract_media(msg)
+        if has_missing_media(msg, media):
+            # ویدیو/فایلی که صفحه‌ی وب تلگرام لینک دانلودش را نمی‌دهد (معمولا ویدیوی حجیم):
+            # پست بدون ویدیو ناقص به نظر می‌رسد، پس منتشر نمی‌شود (در حالت کامل منتقل می‌شود)
+            print(f"skipped (media not downloadable): https://t.me/{post}")
+            continue
         ts = None
         try:
             t = msg.select_one(".tgme_widget_message_date time")
@@ -394,9 +449,10 @@ def collect_basic(sources, seen, skip_telegram=False):
         try:
             items = fetcher(src)
             print(f"[{src.get('name')}] fetched {len(items)}")
+            source_ok(f"src:{src.get('name')}")
         except Exception as ex:
             print(f"[{src.get('name')}] ERROR: {ex}")
-            report_error(f"src:{src.get('name')}",
+            source_failed(f"src:{src.get('name')}",
                          f"منبع {src.get('name')} خطا داد: {type(ex).__name__}: {str(ex)[:150]}")
             continue
         for it in items:
@@ -444,8 +500,9 @@ def tg_call(method: str, payload: dict, files=None):
                 r = requests.post(url, json=payload, timeout=TIMEOUT)
         except requests.exceptions.ReadTimeout:
             # ممکن است تلگرام پیام را گرفته باشد؛ دوباره نمی‌فرستیم تا پست تکراری نشود
-            print(f"telegram timeout ({method}); not retrying to avoid a duplicate")
-            return None
+            # تلگرام معمولا پیام را گرفته؛ «ارسال‌شده» حساب می‌کنیم تا در اجرای بعد تکرار نشود
+            print(f"telegram timeout ({method}); assuming it was delivered")
+            return {"timeout": True}
         except requests.exceptions.RequestException as ex:
             # قطعی لحظه‌ای اتصال (مثل Connection reset): کمی صبر و تلاش دوباره
             wait = 5 * (attempt + 1)
@@ -747,6 +804,7 @@ async def mt_publish(client, target, it, src) -> bool:
 DUP_WINDOW_HOURS = 12    # متن‌های ارسال‌شده در این بازه با پست جدید مقایسه می‌شوند
 DUP_THRESHOLD = 0.6      # چه سهمی از کلمات پست کوتاه‌تر در پست دیگر باشد تا تکراری حساب شود
 DUP_MIN_WORDS = 8        # پست‌های کوتاه‌تر از این (مثلا عکس بدون متن) بررسی نمی‌شوند
+DUP_MIN_SHARED = 8       # و دست‌کم این تعداد کلمه‌ی مشترک (تا دو خبر متفاوت هم‌موضوع تکراری حساب نشوند)
 MAX_RECENT = 1500
 
 STOPWORDS = set("""
@@ -774,7 +832,8 @@ def find_duplicate(fp, state):
         if r["t"] < cutoff or len(r["w"]) < DUP_MIN_WORDS:
             continue
         b = set(r["w"])
-        if len(a & b) / min(len(a), len(b)) >= DUP_THRESHOLD:
+        shared = len(a & b)
+        if shared >= DUP_MIN_SHARED and shared / min(len(a), len(b)) >= DUP_THRESHOLD:
             return r
     return None
 
@@ -857,6 +916,8 @@ def simple_price_post(state, key) -> bool:
     if not msg:
         report_error("price", "ارسال پست قیمت دلار ناموفق بود.")
         return False
+    if not msg.get("message_id"):      # پاسخ تلگرام نرسید؛ پست رفته ولی شماره‌اش معلوم نیست
+        return True
     pin_new(state, msg["message_id"], pin=simple_pin,
             unpin=lambda mid: tg("unpinChatMessage", {"chat_id": CHANNEL_ID, "message_id": mid}))
     return True
@@ -924,9 +985,10 @@ async def paced_loop(collect, publish_one, state, seen, price_post=None):
             await run_price_if_due(price_post, state, seen)
         try:
             collected = await collect()
+            source_ok("collect")
         except Exception as ex:   # خطای لحظه‌ای شبکه نباید کل اجرا را متوقف کند
             print(f"collect failed: {ex!r}")
-            report_error("collect", f"خواندن منابع خطا داد: {type(ex).__name__}")
+            source_failed("collect", f"خواندن منابع خطا داد: {type(ex).__name__}")
             collected = []
         queue = [(it, s) for it, s in prepare_queue(collected) if it["id"] not in failed_ids]
         sent = False
@@ -1008,9 +1070,10 @@ async def mt_main(sources, seen, first_run, state):
                 try:
                     items = await mt_fetch(client, src)
                     print(f"[{src.get('name')}] fetched {len(items)}")
+                    source_ok(f"src:{src.get('name')}")
                 except Exception as ex:
                     print(f"[{src.get('name')}] ERROR: {ex!r}")
-                    report_error(f"src:{src.get('name')}",
+                    source_failed(f"src:{src.get('name')}",
                                  f"منبع {src.get('name')} خطا داد: {type(ex).__name__}: {str(ex)[:150]}")
                     continue
                 new_items += [(it, src) for it in items
