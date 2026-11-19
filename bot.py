@@ -7,6 +7,7 @@ skips anything already posted (state.json) and publishes new items to your
 channel.
 
 Changes in this version:
+  * Dollar price from @DO_L4 posted and pinned at 9, 12, 17, 21 Tehran time
   * The same story from several sources is posted only once
   * Posts go out one at a time (default: 1 post every minute, newest first)
   * Source channel names (@username, t.me links) are replaced with YOUR channel
@@ -358,7 +359,8 @@ def format_message(item, src) -> str:
 
 
 # ================================================================ SIMPLE MODE (Bot API)
-def tg(method: str, payload: dict, files=None) -> bool:
+def tg_call(method: str, payload: dict, files=None):
+    """درخواست به Bot API؛ در صورت موفقیت مقدار result و در غیر این صورت None برمی‌گرداند."""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
     for _ in range(3):
         if files:
@@ -367,15 +369,19 @@ def tg(method: str, payload: dict, files=None) -> bool:
         else:
             r = requests.post(url, json=payload, timeout=TIMEOUT)
         if r.status_code == 200:
-            return True
+            return r.json().get("result", True)
         if r.status_code == 429:
             wait = r.json().get("parameters", {}).get("retry_after", 10)
             print(f"rate limited, sleeping {wait}s")
             time.sleep(wait + 1)
             continue
         print(f"telegram error ({method}) {r.status_code}: {r.text[:200]}")
-        return False
-    return False
+        return None
+    return None
+
+
+def tg(method: str, payload: dict, files=None) -> bool:
+    return tg_call(method, payload, files) is not None
 
 
 def send_text(text: str, preview: bool = True) -> bool:
@@ -680,11 +686,114 @@ def remember(fp, link, state):
     state["recent"] = recent[-MAX_RECENT:]
 
 
+# ================================================================ PRICE POSTS
+# روزی چند بار آخرین قیمت دلار از کانال PRICE_CHANNEL منتشر و بالای کانال پین می‌شود.
+PRICE_CHANNEL = "DO_L4"
+PRICE_TIMES = ["09:00", "12:00", "17:00", "21:00"]   # به وقت تهران
+PRICE_LATE_MIN = 60        # اگر ربات دیر رسید، تا این چند دقیقه بعد از موعد هنوز ارسال کند
+PRICE_MAX_AGE_MIN = 180    # قیمتی قدیمی‌تر از این منتشر نمی‌شود
+PRICE_WORDS = ("دلار",)
+
+try:
+    from zoneinfo import ZoneInfo
+    TEHRAN = ZoneInfo("Asia/Tehran")
+except Exception:
+    from datetime import timezone, timedelta
+    TEHRAN = timezone(timedelta(hours=3, minutes=30))
+
+FA_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def due_price_slot(state):
+    """اگر وقت یکی از پست‌های قیمت رسیده و هنوز ارسال نشده، کلید آن را برمی‌گرداند."""
+    now = datetime.now(TEHRAN)
+    done = state.get("price_done", [])
+    for hhmm in PRICE_TIMES:
+        h, m = map(int, hhmm.split(":"))
+        slot = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        key = slot.strftime("%Y-%m-%d ") + hhmm
+        if key in done:
+            continue
+        late = (now - slot).total_seconds() / 60
+        if 0 <= late <= PRICE_LATE_MIN:
+            return key
+    return None
+
+
+def mark_price_done(state, key):
+    state["price_done"] = (state.get("price_done", []) + [key])[-20:]
+
+
+def pick_price(items):
+    """جدیدترین پست قیمت دلار (بدون تبلیغ و نه خیلی قدیمی) را انتخاب می‌کند."""
+    cutoff = time.time() - PRICE_MAX_AGE_MIN * 60
+    good = [
+        it for it in items
+        if any(w in it.get("summary", "") for w in PRICE_WORDS)
+        and re.search(r"[0-9۰-۹]{2,}", it.get("summary", ""))
+        and not is_ad(it.get("summary", ""))
+        and (it.get("ts") or 0) >= cutoff
+    ]
+    good.sort(key=lambda it: it.get("ts") or 0, reverse=True)
+    return good[0] if good else None
+
+
+def price_text(body_html: str, key: str) -> str:
+    hhmm = key.split(" ")[1]
+    parts = [f"💵 <b>قیمت دلار | ساعت {hhmm.translate(FA_DIGITS)}</b>", body_html]
+    if MY_CHANNEL:
+        parts.append(esc(MY_CHANNEL))
+    return "\n\n".join(p for p in parts if p)
+
+
+def simple_price_post(state, key) -> bool:
+    items = fetch_telegram_channel({"channel": PRICE_CHANNEL, "limit": 20})
+    it = pick_price(items)
+    if not it:
+        report_error("price", f"پست قیمت ساعت {key.split(' ')[1]} ارسال نشد: قیمت تازه‌ای در @{PRICE_CHANNEL} پیدا نشد.")
+        return False
+    msg = tg_call("sendMessage", {"chat_id": CHANNEL_ID, "text": price_text(esc(it["summary"]), key),
+                                  "parse_mode": "HTML", "disable_web_page_preview": True})
+    if not msg:
+        report_error("price", "ارسال پست قیمت دلار ناموفق بود.")
+        return False
+    pin_new(state, msg["message_id"],
+            pin=lambda mid: tg("pinChatMessage", {"chat_id": CHANNEL_ID, "message_id": mid,
+                                                   "disable_notification": True}),
+            unpin=lambda mid: tg("unpinChatMessage", {"chat_id": CHANNEL_ID, "message_id": mid}))
+    return True
+
+
+def pin_new(state, new_id, pin, unpin):
+    old = state.get("price_pinned")
+    if not pin(new_id):
+        report_error("pin", "پین کردن پست قیمت ناموفق بود؛ دسترسی Pin Messages ربات را در کانال چک کن.")
+        return
+    if old and old != new_id:
+        unpin(old)
+    state["price_pinned"] = new_id
+
+
+async def run_price_if_due(price_post, state, seen):
+    key = due_price_slot(state)
+    if not key:
+        return
+    print(f"price slot {key}")
+    try:
+        ok = await price_post(state, key)
+    except Exception as ex:
+        ok = False
+        report_error("price", f"پست قیمت خطا داد: {type(ex).__name__}: {str(ex)[:150]}")
+    mark_price_done(state, key)   # موفق یا ناموفق، این نوبت دیگر تکرار نمی‌شود
+    save_state(state, seen)
+    print(f"price slot {key}: {'posted' if ok else 'FAILED'}")
+
+
 # ================================================================ PACED LOOP
 IDLE_CHECK_SEC = 60    # وقتی پست تازه‌ای نیست، هر چند ثانیه دوباره منابع چک شوند
 
 
-async def paced_loop(collect, publish_one, state, seen):
+async def paced_loop(collect, publish_one, state, seen, price_post=None):
     """
     تا RUN_MINUTES دقیقه کار می‌کند و هر POST_INTERVAL_MIN دقیقه فقط یک پست می‌فرستد.
     زمان آخرین ارسال در state ذخیره می‌شود تا فاصله بین اجراها هم رعایت شود.
@@ -704,6 +813,8 @@ async def paced_loop(collect, publish_one, state, seen):
             print(f"waiting {int(wait)}s until next post")
             await asyncio.sleep(wait)
 
+        if price_post:
+            await run_price_if_due(price_post, state, seen)
         queue = [(it, s) for it, s in prepare_queue(await collect()) if it["id"] not in failed_ids]
         sent = False
         cycle_failed = 0
@@ -784,9 +895,40 @@ async def mt_main(sources, seen, first_run, state):
         async def publish_one(it, src):
             return await mt_publish(client, target, it, src)
 
+        async def price_post(state, key):
+            it = pick_price(await mt_fetch(client, {"channel": PRICE_CHANNEL, "limit": 20}))
+            if not it:
+                report_error("price", f"پست قیمت ساعت {key.split(' ')[1]} ارسال نشد: قیمت تازه‌ای در @{PRICE_CHANNEL} پیدا نشد.")
+                return False
+            msg = await client.send_message(target, price_text(it.get("html") or esc(it["summary"]), key),
+                                            parse_mode="html", link_preview=False)
+
+            async def pin(mid):
+                try:
+                    await client.pin_message(target, mid, notify=False)
+                    return True
+                except Exception as ex:
+                    print(f"pin failed: {ex!r}")
+                    return False
+
+            async def unpin(mid):
+                try:
+                    await client.unpin_message(target, mid)
+                except Exception as ex:
+                    print(f"unpin failed: {ex!r}")
+
+            old = state.get("price_pinned")
+            if await pin(msg.id):
+                if old and old != msg.id:
+                    await unpin(old)
+                state["price_pinned"] = msg.id
+            else:
+                report_error("pin", "پین کردن پست قیمت ناموفق بود؛ دسترسی Pin Messages را چک کن.")
+            return True
+
         if first_run:
             return mark_first_run(await collect(), seen)
-        return await paced_loop(collect, publish_one, state, seen)
+        return await paced_loop(collect, publish_one, state, seen, price_post)
     finally:
         await client.disconnect()
 
@@ -798,9 +940,12 @@ async def simple_main(sources, seen, first_run, state):
     async def publish_one(it, src):
         return publish(it, src)
 
+    async def price_post(state, key):
+        return simple_price_post(state, key)
+
     if first_run:
         return mark_first_run(await collect(), seen)
-    return await paced_loop(collect, publish_one, state, seen)
+    return await paced_loop(collect, publish_one, state, seen, price_post)
 
 
 # ---------------------------------------------------------------- main
