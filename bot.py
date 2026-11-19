@@ -49,6 +49,7 @@ API_HASH = os.environ.get("API_HASH", "")
 TG_SESSION = os.environ.get("TG_SESSION", "")
 ALERT_CHAT_ID = os.environ.get("ALERT_CHAT_ID", "").strip()   # شناسه عددی چت خودت برای دریافت هشدار
 TEST_ALERT = os.environ.get("TEST_ALERT", "").strip().lower() == "true"
+SKIP_BACKLOG = os.environ.get("SKIP_BACKLOG", "").strip().lower() == "true"   # صف فعلی بدون ارسال رد شود
 ALERT_COOLDOWN = 6 * 3600   # یک هشدار تکراری حداکثر هر ۶ ساعت ارسال می‌شود
 
 # اسم کانال خودت (اگر CHANNEL_ID عددی است، MY_CHANNEL را در Secrets/Variables بگذار
@@ -858,6 +859,14 @@ async def paced_loop(collect, publish_one, state, seen, price_post=None):
     return posted, pending
 
 
+def skip_backlog(items, seen, state):
+    """همه پست‌های در صف را بدون ارسال «دیده‌شده» می‌کند؛ از این به بعد فقط پست‌های تازه می‌روند."""
+    for it, _ in items:
+        seen.add(it["id"])
+    save_state(state, seen)
+    print(f"Backlog cleared: {len(items)} queued posts skipped without posting.")
+
+
 def mark_first_run(items, seen):
     print("First run: marking existing items as seen without posting.")
     for it, _ in items:
@@ -938,6 +947,8 @@ async def mt_main(sources, seen, first_run, state):
 
         if first_run:
             return mark_first_run(await collect(), seen)
+        if SKIP_BACKLOG:
+            skip_backlog(await collect(), seen, state)
         return await paced_loop(collect, publish_one, state, seen, price_post)
     finally:
         await client.disconnect()
@@ -955,6 +966,8 @@ async def simple_main(sources, seen, first_run, state):
 
     if first_run:
         return mark_first_run(await collect(), seen)
+    if SKIP_BACKLOG:
+        skip_backlog(await collect(), seen, state)
     return await paced_loop(collect, publish_one, state, seen, price_post)
 
 

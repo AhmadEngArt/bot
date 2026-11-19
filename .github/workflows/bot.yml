@@ -11,6 +11,10 @@ on:
         description: "ارسال پیام تست هشدار"
         type: boolean
         default: false
+      skip_backlog:
+        description: "رد کردن همه پست‌های در صف (بدون ارسال)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -44,6 +48,7 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           ALERT_CHAT_ID: ${{ secrets.ALERT_CHAT_ID }}
           TEST_ALERT: ${{ github.event.inputs.test_alert == 'true' && 'true' || vars.TEST_ALERT }}
+          SKIP_BACKLOG: ${{ github.event.inputs.skip_backlog == 'true' && 'true' || '' }}
           POST_INTERVAL_MIN: ${{ vars.POST_INTERVAL_MIN }}
           RUN_MINUTES: ${{ vars.RUN_MINUTES }}
         run: python bot.py
