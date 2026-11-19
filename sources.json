@@ -12,5 +12,6 @@
   {"name": "periodi", "type": "telegram", "channel": "periodi", "limit": 3},
   {"name": "hashieh", "type": "telegram", "channel": "hashieh", "limit": 3},
   {"name": "Jahan_Fouri", "type": "telegram", "channel": "Jahan_Fouri", "limit": 5},
-  {"name": "akhbarefori", "type": "telegram", "channel": "akhbarefori", "limit": 5}
+  {"name": "akhbarefori", "type": "telegram", "channel": "akhbarefori", "limit": 5},
+  {"name": "pe_az", "type": "telegram", "channel": "pe_az", "limit": 3}
 ]
