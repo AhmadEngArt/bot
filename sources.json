@@ -52,5 +52,35 @@
     "type": "telegram",
     "channel": "mostanad_COM",
     "limit": 10
+  },
+  {
+    "name": "KiriFutballl",
+    "type": "telegram",
+    "channel": "KiriFutballl",
+    "limit": 10
+  },
+  {
+    "name": "periodi",
+    "type": "telegram",
+    "channel": "periodi",
+    "limit": 10
+  },
+  {
+    "name": "hashieh",
+    "type": "telegram",
+    "channel": "hashieh",
+    "limit": 10
+  },
+  {
+    "name": "Jahan_Fouri",
+    "type": "telegram",
+    "channel": "Jahan_Fouri",
+    "limit": 10
+  },
+  {
+    "name": "akhbarefori",
+    "type": "telegram",
+    "channel": "akhbarefori",
+    "limit": 10
   }
 ]
