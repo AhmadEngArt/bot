@@ -144,6 +144,21 @@ def is_ad(text: str) -> bool:
     return any(k in t for k in AD_KEYWORDS)
 
 
+PRICE_TICKER_WORDS = ("دلار", "یورو", "طلا", "سکه", "تتر", "usdt", "آبشده", "مثقال", "درهم", "بیت کوین")
+
+
+def is_price_ticker(text: str) -> bool:
+    """
+    پست‌های جدول قیمت (دلار/طلا/تتر با چند عدد بزرگ و خرید/فروش) از منبع‌های خبری رد می‌شوند؛
+    قیمت فقط سر ساعت‌های مشخص از PRICE_CHANNEL می‌آید. خبر عادی درباره دلار رد نمی‌شود.
+    """
+    t = (text or "").lower().translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
+    words = sum(1 for w in PRICE_TICKER_WORDS if w in t)
+    big_numbers = len(re.findall(r"\d{1,3}(?:[,،٬]\d{3})+|\d{5,}", t))
+    buy_sell = ("خرید" in t and "فروش" in t) or "معامله" in t
+    return words >= 1 and big_numbers >= 2 and (buy_sell or words >= 2)
+
+
 def prepare_queue(items):
     """
     پست‌های خیلی قدیمی را حذف و بقیه را مرتب می‌کند: جدیدترین اول.
@@ -354,6 +369,8 @@ def collect_basic(sources, seen, skip_telegram=False):
             continue
         for it in items:
             if is_ad(f"{it['title']} {it['summary']}"):
+                continue
+            if is_price_ticker(f"{it['title']} {it['summary']}"):
                 continue
             if it["id"] not in seen:
                 new.append((it, src))
@@ -942,7 +959,8 @@ async def mt_main(sources, seen, first_run, state):
                     report_error(f"src:{src.get('name')}",
                                  f"منبع {src.get('name')} خطا داد: {type(ex).__name__}: {str(ex)[:150]}")
                     continue
-                new_items += [(it, src) for it in items if it["id"] not in seen]
+                new_items += [(it, src) for it in items
+                              if it["id"] not in seen and not is_price_ticker(it.get("summary", ""))]
             return new_items
 
         async def publish_one(it, src):
