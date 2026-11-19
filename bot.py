@@ -537,6 +537,28 @@ def format_message(item, src) -> str:
 
 # ================================================================ SIMPLE MODE (Bot API)
 LAST_SENT_ID = None   # شماره‌ی اولین پیامِ آخرین پست (برای لینک در خلاصه‌ی شبانه)
+LAST_WAS_GROUP = False
+
+
+# ---------------------------------------------------------------- share button
+# دکمه‌ی «ارسال برای دوستان» زیر هر پست: با یک لمس، پست برای دوست یا گروه فرستاده می‌شود
+SHARE_TEXT = "📢 ارسال برای دوستان"
+
+
+def share_markup(post_id=None) -> dict:
+    from urllib.parse import quote
+    handle = MY_CHANNEL.lstrip("@")
+    url = f"https://t.me/{handle}/{post_id}" if post_id else f"https://t.me/{handle}"
+    share = f"https://t.me/share/url?url={quote(url, safe='')}&text={quote(SIGN_TEXT + ' | ' + SIGN_SLOGAN)}"
+    return {"inline_keyboard": [[{"text": SHARE_TEXT, "url": share}]]}
+
+
+def add_share_button(message_id):
+    """دکمه بعد از ارسال اضافه می‌شود تا لینک همان پست را داشته باشد (آلبوم‌ها دکمه نمی‌گیرند)."""
+    if not MY_CHANNEL or not message_id:
+        return
+    tg("editMessageReplyMarkup", {"chat_id": CHANNEL_ID, "message_id": message_id,
+                                   "reply_markup": share_markup(message_id)})
 
 
 def tg_call(method: str, payload: dict, files=None):
@@ -563,10 +585,13 @@ def tg_call(method: str, payload: dict, files=None):
         if r.status_code == 200:
             res = r.json().get("result", True)
             global LAST_SENT_ID
+            global LAST_WAS_GROUP
             if isinstance(res, dict) and res.get("message_id"):
-                LAST_SENT_ID = LAST_SENT_ID or res["message_id"]
+                if not LAST_SENT_ID:
+                    LAST_SENT_ID, LAST_WAS_GROUP = res["message_id"], False
             elif isinstance(res, list) and res and isinstance(res[0], dict):
-                LAST_SENT_ID = LAST_SENT_ID or res[0].get("message_id")
+                if not LAST_SENT_ID:
+                    LAST_SENT_ID, LAST_WAS_GROUP = res[0].get("message_id"), True
             return res
         if r.status_code == 429:
             wait = r.json().get("parameters", {}).get("retry_after", 10)
@@ -978,7 +1003,8 @@ def simple_price_post(state, key) -> bool:
         report_error("price", f"پست قیمت ساعت {key.split(' ')[1]} ارسال نشد: قیمت تازه‌ای در @{PRICE_CHANNEL} پیدا نشد.")
         return False
     msg = tg_call("sendMessage", {"chat_id": CHANNEL_ID, "text": price_text(esc(it["summary"]), key),
-                                  "parse_mode": "HTML", "disable_web_page_preview": True})
+                                  "parse_mode": "HTML", "disable_web_page_preview": True,
+                                  "reply_markup": share_markup()})
     if not msg:
         report_error("price", "ارسال پست قیمت دلار ناموفق بود.")
         return False
@@ -1121,6 +1147,95 @@ async def run_digest_if_due(send_text_fn, state, seen):
     save_state(state, seen)
 
 
+# ================================================================ WEBSITE (GitHub Pages)
+# هر اجرا صفحه‌ی docs/index.html را با آخرین پست‌ها می‌سازد؛ گیتهاب آن را رایگان منتشر می‌کند
+# (Settings → Pages → Branch: main، پوشه /docs) و گوگل ایندکسش می‌کند.
+SITE_DIR = BASE / "docs"
+SITE_POSTS = 60
+
+
+def site_add(state, it, src):
+    if not LAST_SENT_ID:
+        return
+    posts = state.setdefault("site_posts", [])
+    text = re.sub(r"\s+", " ", f"{it.get('title', '')} {it.get('summary', '')}").strip()
+    posts.append({"t": time.time(), "m": LAST_SENT_ID, "g": tag_for(it, src),
+                  "s": text[:420] + ("…" if len(text) > 420 else ""),
+                  "v": bool(it.get("media"))})
+    state["site_posts"] = posts[-SITE_POSTS:]
+
+
+def write_site(state):
+    try:
+        handle = MY_CHANNEL.lstrip("@")
+        link = f"https://t.me/{handle}"
+        cards = []
+        for p in reversed(state.get("site_posts", [])):
+            when = datetime.fromtimestamp(p["t"], TEHRAN).strftime("%H:%M").translate(FA_DIGITS)
+            media = '<span class="m">🎬 تصویر/ویدیو در کانال</span>' if p.get("v") else ""
+            cards.append(
+                f'<article><div class="h"><span class="g">{esc(p.get("g") or "📰")}</span>'
+                f'<time>{when}</time></div><p>{esc(p["s"])}</p>{media}'
+                f'<a class="r" href="{link}/{p["m"]}" rel="noopener">ادامه در تلگرام ←</a></article>')
+        jy, jm, jd = jalali(datetime.now(TEHRAN).date())
+        date_fa = f"{jd} {FA_MONTHS[jm - 1]} {jy}".translate(FA_DIGITS)
+        page = SITE_TEMPLATE.format(link=link, handle=handle, date=date_fa, cards="\n".join(cards),
+                                    title=f"{SIGN_TEXT} | {SIGN_SLOGAN}")
+        SITE_DIR.mkdir(exist_ok=True)
+        (SITE_DIR / "index.html").write_text(page, encoding="utf-8")
+        (SITE_DIR / "robots.txt").write_text("User-agent: *\nAllow: /\n", encoding="utf-8")
+    except Exception as ex:
+        print(f"site write failed: {ex!r}")
+
+
+SITE_TEMPLATE = """<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} — آخرین خبرهای امروز</title>
+<meta name="description" content="آخرین خبرهای فوری ایران و جهان، ورزش، اقتصاد و قیمت دلار؛ هر روز، هر ساعت در کانال تلگرام روزانه ۲۴.">
+<meta property="og:title" content="{title}">
+<meta property="og:description" content="خبر فوری ایران و جهان + قیمت دلار ۴ بار در روز. عضو کانال تلگرام شو.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700;900&display=swap">
+<style>
+:root{{--bg:#F4F6F9;--card:#fff;--ink:#111827;--sub:#4B5563;--acc:#E3141B;--nav:#0A1A3F;--y:#FFD400}}
+*{{box-sizing:border-box}}body{{margin:0;font-family:Vazirmatn,Tahoma,sans-serif;background:var(--bg);color:var(--ink);line-height:1.9}}
+header{{background:var(--nav);color:#fff;padding:28px 16px 24px;text-align:center}}
+.logo{{display:inline-flex;width:72px;height:72px;border-radius:50%;background:var(--y);color:#111;font-weight:900;font-size:34px;align-items:center;justify-content:center}}
+h1{{margin:10px 0 4px;font-size:26px;font-weight:900}}header p{{margin:0;color:#CBD5E1}}
+.join{{display:inline-block;margin-top:16px;background:var(--acc);color:#fff;text-decoration:none;font-weight:900;font-size:18px;padding:12px 28px;border-radius:999px}}
+.join:hover{{background:#B70F15}}
+main{{max-width:720px;margin:0 auto;padding:16px}}
+.d{{color:var(--sub);font-size:14px;margin:4px 4px 12px}}
+article{{background:var(--card);border-radius:14px;padding:14px 16px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}}
+.h{{display:flex;justify-content:space-between;color:var(--sub);font-size:13px}}.g{{font-weight:700;color:var(--ink)}}
+article p{{margin:6px 0 8px;font-size:16px}}.m{{display:block;color:var(--sub);font-size:13px;margin-bottom:4px}}
+.r{{color:#1D4ED8;text-decoration:none;font-weight:700;font-size:14px}}.r:hover{{text-decoration:underline}}
+.cta{{text-align:center;background:var(--card);border-radius:14px;padding:20px;margin:20px 0}}
+footer{{text-align:center;color:var(--sub);font-size:13px;padding:24px}}
+</style>
+</head>
+<body>
+<header>
+<div class="logo" aria-hidden="true">۲۴</div>
+<h1>روزانه ۲۴</h1>
+<p>خبر فوری ایران و جهان · ورزش · اقتصاد · قیمت دلار ۴ بار در روز</p>
+<a class="join" href="{link}">📡 عضویت در کانال تلگرام</a>
+</header>
+<main>
+<div class="d">آخرین خبرها · به‌روزرسانی: {date}</div>
+{cards}
+<div class="cta"><b>همه‌ی خبرها، زودتر از همه، در تلگرام</b><br><a class="join" href="{link}">عضویت در <bdi dir="ltr">@{handle}</bdi></a></div>
+</main>
+<footer>روزانه ۲۴ · <a href="{link}" dir="ltr">t.me/{handle}</a></footer>
+</body>
+</html>
+"""
+
+
 # ================================================================ PACED LOOP
 IDLE_CHECK_SEC = 60    # وقتی پست تازه‌ای نیست، هر چند ثانیه دوباره منابع چک شوند
 
@@ -1180,6 +1295,7 @@ async def paced_loop(collect, publish_one, state, seen, price_post=None, digest_
                 seen.add(it["id"])
                 remember(fp, it["link"], state, key=it["id"])
                 log_news(state, it, src)
+                site_add(state, it, src)
                 state["last_post"] = time.time()
                 save_state(state, seen)
                 posted += 1
@@ -1312,14 +1428,17 @@ async def simple_main(sources, seen, first_run, state):
     async def publish_one(it, src):
         global LAST_SENT_ID
         LAST_SENT_ID = None
-        return publish(it, src)
+        ok = publish(it, src)
+        if ok and LAST_SENT_ID and not LAST_WAS_GROUP:
+            add_share_button(LAST_SENT_ID)
+        return ok
 
     async def price_post(state, key):
         return simple_price_post(state, key)
 
     async def digest_send(text):
         return tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML",
-                                  "disable_web_page_preview": True})
+                                  "disable_web_page_preview": True, "reply_markup": share_markup()})
 
     if first_run:
         return mark_first_run(await collect(), seen)
@@ -1369,6 +1488,7 @@ def main():
     finally:
         send_alerts(state)
         save_state(state, seen)
+        write_site(state)
     print(f"Done. Posted {posted}, pending {pending}.")
     if crash is not None:
         raise crash
