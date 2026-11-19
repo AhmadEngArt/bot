@@ -876,11 +876,9 @@ async def mt_main(sources, seen, first_run, state):
         if not await client.is_user_authorized():
             sys.exit("TG_SESSION is invalid or expired. Generate a new one with gen_session.py")
 
-        peers = [parse_peer(CHANNEL_ID)] + [
-            parse_peer(s["channel"]) for s in sources if s.get("type") == "telegram"
-        ]
-        if any(isinstance(p, int) for p in peers):
-            await client.get_dialogs()  # برای شناسایی کانال‌هایی که با شناسه‌ی عددی داده شده‌اند
+        # یک بار لیست چت‌ها را می‌گیریم تا کانال‌هایی که حساب عضوشان است از حافظه شناسایی شوند
+        # (جلوگیری از درخواست‌های مکرر جستجوی یوزرنیم که تلگرام برایشان محدودیت FloodWait می‌گذارد)
+        await client.get_dialogs()
         target = await client.get_entity(parse_peer(CHANNEL_ID))
 
         async def collect():
