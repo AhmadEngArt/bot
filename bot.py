@@ -139,9 +139,26 @@ def replace_channels(text: str) -> str:
     return text
 
 
+# نشانه‌های تبلیغ‌های شبکه‌های تبلیغاتی تلگرام
+AD_PATTERNS = [
+    re.compile(r"#(?!(?:13|14|19|20)\d\d(?!\d))\d{4,7}(?!\d)"),   # کد تبلیغ مثل #28083 (سال‌ها مثل #1401 نه)
+    re.compile(r"(?:https?://)?(?:www\.)?(?:bo0\.ir|yun\.ir|bit\.ly|b2n\.ir|l1nk\.ir|zaya\.io|"
+               r"tinyurl\.com|cutt\.ly|rebrand\.ly|shorturl\.at|t\.co|goo\.gl|is\.gd|s\.id|ln\.run|"
+               r"yek\.link|ylnk\.ir|tapsell|yektanet)", re.I),   # لینک کوتاه و شبکه‌های تبلیغاتی
+]
+AD_PHRASES = [
+    "اطلاعات بیشتر در لینک", "لینک زیر", "روی لینک بزن", "همین حالا ثبت", "شانست رو", "شانس خود را",
+    "جایزه‌دار", "جایزه دار", "قرعه‌کشی بزرگ", "قرعه کشی بزرگ", "برنده‌ی جایزه", "برنده جایزه",
+    "ثبت‌نام کن", "ثبت نام کن", "دانلود کن", "نصب کن", "همین الان بخر", "خرید کن", "سفارش بده",
+    "رایگان دریافت", "هدیه بگیر", "کد معرف",
+]
+
+
 def is_ad(text: str) -> bool:
     t = (text or "").lower()
-    return any(k in t for k in AD_KEYWORDS)
+    if any(k in t for k in AD_KEYWORDS) or any(k in t for k in AD_PHRASES):
+        return True
+    return any(p.search(t) for p in AD_PATTERNS)
 
 
 PRICE_TICKER_WORDS = ("دلار", "یورو", "طلا", "سکه", "تتر", "usdt", "آبشده", "مثقال", "درهم", "بیت کوین")
