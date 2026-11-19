@@ -39,6 +39,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Run bot
+        id: bot
         timeout-minutes: 60
         env:
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
@@ -63,9 +64,13 @@ jobs:
           git diff --staged --quiet || (git commit -m "update state" && (git push || (git pull --rebase origin main && git push)))
 
       # اجرای بعدی را خود ربات شروع می‌کند (زمان‌بندی گیتهاب گاهی ساعت‌ها اجرا نمی‌شود).
-      # فقط وقتی ربات سالم تمام شده؛ اگر خطا داد، زنجیره قطع می‌شود و زمان‌بندی بالا دوباره امتحان می‌کند.
+      # اگر ربات خطا داد، ۵ دقیقه صبر و بعد دوباره شروع (تا ربات هیچ‌وقت متوقف نماند).
+      # اجرایی که دستی کنسل شده، اجرای بعدی را شروع نمی‌کند.
       - name: Start next run
-        if: success()
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run bot.yml --ref main -R ${{ github.repository }}
+          BOT_FAILED: ${{ steps.bot.outcome == 'failure' }}
+        run: |
+          if [ "$BOT_FAILED" = "true" ]; then echo "bot failed; waiting 5 min before restarting"; sleep 300; fi
+          gh workflow run bot.yml --ref main -R ${{ github.repository }}

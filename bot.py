@@ -435,12 +435,23 @@ def format_message(item, src) -> str:
 def tg_call(method: str, payload: dict, files=None):
     """درخواست به Bot API؛ در صورت موفقیت مقدار result و در غیر این صورت None برمی‌گرداند."""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
-    for _ in range(3):
-        if files:
-            data = {k: (v if isinstance(v, (str, int)) else json.dumps(v)) for k, v in payload.items()}
-            r = requests.post(url, data=data, files=files, timeout=UPLOAD_TIMEOUT)
-        else:
-            r = requests.post(url, json=payload, timeout=TIMEOUT)
+    for attempt in range(4):
+        try:
+            if files:
+                data = {k: (v if isinstance(v, (str, int)) else json.dumps(v)) for k, v in payload.items()}
+                r = requests.post(url, data=data, files=files, timeout=UPLOAD_TIMEOUT)
+            else:
+                r = requests.post(url, json=payload, timeout=TIMEOUT)
+        except requests.exceptions.ReadTimeout:
+            # ممکن است تلگرام پیام را گرفته باشد؛ دوباره نمی‌فرستیم تا پست تکراری نشود
+            print(f"telegram timeout ({method}); not retrying to avoid a duplicate")
+            return None
+        except requests.exceptions.RequestException as ex:
+            # قطعی لحظه‌ای اتصال (مثل Connection reset): کمی صبر و تلاش دوباره
+            wait = 5 * (attempt + 1)
+            print(f"telegram connection error ({method}): {type(ex).__name__}; retry in {wait}s")
+            time.sleep(wait)
+            continue
         if r.status_code == 200:
             return r.json().get("result", True)
         if r.status_code == 429:
@@ -911,7 +922,13 @@ async def paced_loop(collect, publish_one, state, seen, price_post=None):
 
         if price_post:
             await run_price_if_due(price_post, state, seen)
-        queue = [(it, s) for it, s in prepare_queue(await collect()) if it["id"] not in failed_ids]
+        try:
+            collected = await collect()
+        except Exception as ex:   # خطای لحظه‌ای شبکه نباید کل اجرا را متوقف کند
+            print(f"collect failed: {ex!r}")
+            report_error("collect", f"خواندن منابع خطا داد: {type(ex).__name__}")
+            collected = []
+        queue = [(it, s) for it, s in prepare_queue(collected) if it["id"] not in failed_ids]
         sent = False
         cycle_failed = 0
         for it, src in queue:
@@ -922,7 +939,12 @@ async def paced_loop(collect, publish_one, state, seen, price_post=None):
                 seen.add(it["id"])
                 save_state(state, seen)
                 continue
-            if await publish_one(it, src):
+            try:
+                ok = await publish_one(it, src)
+            except Exception as ex:
+                print(f"publish failed: {ex!r}")
+                ok = False
+            if ok:
                 seen.add(it["id"])
                 remember(fp, it["link"], state)
                 state["last_post"] = time.time()
