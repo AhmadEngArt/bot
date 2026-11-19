@@ -356,12 +356,15 @@ def extract_media(msg):
 
 
 def has_missing_media(msg, media) -> bool:
-    """آیا پست ویدیو یا فایلی دارد که در صفحه‌ی وب قابل دانلود نیست؟"""
-    if msg.select_one(".message_media_not_supported, .tgme_widget_message_document"):
-        return True
-    players = msg.select(".tgme_widget_message_video_player, .tgme_widget_message_roundvideo_player")
-    videos = [m for m in media if m["type"] == "video"]
-    return len(players) > len(videos)
+    """
+    آیا پست ویدیویی دارد که صفحه‌ی وب فایلش را نمی‌دهد (معمولا ویدیوی حجیم)؟
+    فقط وقتی true است که یک پخش‌کننده‌ی ویدیو هیچ <video src> داخلش نداشته باشد.
+    (بلوک «media not supported» در همه‌ی ویدیوها به‌صورت پنهان هست و نشانه‌ی مشکل نیست.)
+    """
+    for player in msg.select("a.tgme_widget_message_video_player"):
+        if not player.select_one("video[src]"):
+            return True
+    return False
 
 
 def fetch_telegram_channel(src):
