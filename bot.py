@@ -597,4 +597,35 @@ def main():
     sources = load_json(SOURCES_FILE, [])
     state = load_json(STATE_FILE, {"seen": []})
     seen = set(state["seen"])
-    first_run = not state["s
+        first_run = not state["seen"]
+
+    posted = pending = 0
+    try:
+        if mtproto_enabled():
+            import asyncio
+
+            print("Mode: full (MTProto)")
+            posted, pending = asyncio.run(mt_main(sources, seen, first_run))
+        else:
+            print("Mode: simple (Bot API)")
+            new_items = collect_basic(sources, seen)
+            if first_run:
+                print("First run: marking existing items as seen without posting.")
+                for it, _ in new_items:
+                    seen.add(it["id"])
+                new_items = []
+            for it, src in reversed(new_items):  # قدیمی‌تر اول
+                if posted >= MAX_POSTS_PER_RUN:
+                    break
+                if publish(it, src):
+                    seen.add(it["id"])
+                    posted += 1
+                    time.sleep(SEND_DELAY)
+            pending = max(0, len(new_items) - posted)
+    finally:
+        save_state(state, seen)
+    print(f"Done. Posted {posted}, pending {pending}.")
+
+
+if __name__ == "__main__":
+    main()
