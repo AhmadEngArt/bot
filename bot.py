@@ -17,6 +17,7 @@ Env vars (GitHub Secrets):
   BOT_TOKEN   - simple mode only
   API_ID, API_HASH, TG_SESSION - full mode (see gen_session.py)
 """
+import calendar
 import hashlib
 import html
 import json
@@ -26,6 +27,7 @@ import shutil
 import sys
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -62,9 +64,10 @@ AD_KEYWORDS = [
 UA = {"User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)"}
 TIMEOUT = 25
 UPLOAD_TIMEOUT = 180
-MAX_POSTS_PER_RUN = 60
+MAX_POSTS_PER_RUN = 12      # سقف ارسال در هر اجرا؛ بقیه اجرای بعدی می‌رود (پخش یکنواخت‌تر)
+MAX_AGE_HOURS = 6           # پست‌های قدیمی‌تر از این (ساعت) ارسال نمی‌شوند؛ 0 = بدون محدودیت
 MAX_STATE_ITEMS = 5000
-SEND_DELAY = 3
+SEND_DELAY = 10
 MAX_FILE_BYTES = 49 * 1024 * 1024
 CAPTION_LIMIT = 1024
 
@@ -112,6 +115,26 @@ def replace_channels(text: str) -> str:
 def is_ad(text: str) -> bool:
     t = (text or "").lower()
     return any(k in t for k in AD_KEYWORDS)
+
+
+def prepare_queue(items):
+    """پست‌های خیلی قدیمی را حذف و بقیه را به ترتیب زمان انتشار (قدیمی‌ترین اول) مرتب می‌کند."""
+    now = time.time()
+    cutoff = now - MAX_AGE_HOURS * 3600 if MAX_AGE_HOURS > 0 else 0
+    ok = [
+        (it, src) for it, src in items
+        if src.get("scan_back") or not it.get("ts") or it["ts"] >= cutoff
+    ]
+    ok.sort(key=lambda x: x[0].get("ts") or now)
+    return ok
+
+
+def entry_ts(e):
+    try:
+        t = e.get("published_parsed") or e.get("updated_parsed")
+        return calendar.timegm(t) if t else None
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------- alerts
@@ -169,6 +192,7 @@ def fetch_rss(src):
                 "title": clean(e.get("title", ""), 250),
                 "summary": clean(e.get("summary", ""), 400),
                 "link": link,
+                "ts": entry_ts(e),
             }
         )
     return items
@@ -197,7 +221,10 @@ def fetch_telegram_channel(src):
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
     items = []
-    for msg in soup.select(".tgme_widget_message_wrap")[-src.get("limit", 10):]:
+    wraps = soup.select(".tgme_widget_message_wrap")
+    deep = bool(src.get("scan_back", False))
+    wraps = list(reversed(wraps)) if deep else wraps[-src.get("limit", 10):]
+    for msg in wraps:
         bubble = msg.select_one(".tgme_widget_message")
         if not bubble:
             continue
@@ -210,6 +237,12 @@ def fetch_telegram_channel(src):
             continue
         text = replace_channels(text)
         media = extract_media(msg)
+        ts = None
+        try:
+            t = msg.select_one(".tgme_widget_message_date time")
+            ts = datetime.fromisoformat(t["datetime"]).timestamp()
+        except Exception:
+            pass
         if not media and len(text) < 20:
             continue
         items.append(
@@ -218,10 +251,13 @@ def fetch_telegram_channel(src):
                 "title": "",
                 "summary": text,
                 "link": f"https://t.me/{post}",
+                "ts": ts,
                 "media": media,
                 "from_telegram": True,
             }
         )
+        if len(items) >= src.get("limit", 10):
+            break
     return items
 
 
@@ -461,7 +497,9 @@ def is_visual(m) -> bool:
 async def mt_fetch(client, src):
     peer = parse_peer(src["channel"])
     limit = src.get("limit", 10)
-    msgs = await client.get_messages(peer, limit=limit * 4)  # newest first
+    # scan_back=true در sources.json: تبلیغ‌ها رد می‌شوند و تا رسیدن به limit پست سالم به عقب می‌رویم
+    deep = bool(src.get("scan_back", False))
+    msgs = await client.get_messages(peer, limit=limit * 4 + (10 if deep else 0))  # newest first
     groups, order = {}, []
     for m in msgs:
         if m.action:
@@ -473,7 +511,7 @@ async def mt_fetch(client, src):
         groups[key].append(m)
 
     items = []
-    for key in order[:limit]:
+    for key in (order if deep else order[:limit]):
         grp = sorted(groups[key], key=lambda x: x.id)
         raw = next((m.raw_text for m in grp if m.raw_text), "") or ""
         body = next((m.text for m in grp if m.raw_text), "") or ""
@@ -492,10 +530,13 @@ async def mt_fetch(client, src):
                 "summary": raw,
                 "html": body,
                 "link": post_link(peer, first_id),
+                "ts": grp[0].date.timestamp() if grp[0].date else None,
                 "msgs": media_msgs,
                 "from_telegram": True,
             }
         )
+        if len(items) >= limit:
+            break
     return items
 
 
@@ -613,8 +654,9 @@ async def mt_main(sources, seen, first_run):
                 seen.add(it["id"])
             return 0, 0
 
+        new_items = prepare_queue(new_items)
         posted = failed = 0
-        for it, src in reversed(new_items):
+        for it, src in new_items:
             if posted >= MAX_POSTS_PER_RUN:
                 break
             if await mt_publish(client, target, it, src):
@@ -669,8 +711,9 @@ def main():
                 for it, _ in new_items:
                     seen.add(it["id"])
                 new_items = []
+            new_items = prepare_queue(new_items)
             failed = 0
-            for it, src in reversed(new_items):  # قدیمی‌تر اول
+            for it, src in new_items:  # قدیمی‌ترین اول
                 if posted >= MAX_POSTS_PER_RUN:
                     break
                 if publish(it, src):
