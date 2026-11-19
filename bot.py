@@ -193,6 +193,13 @@ def ad_score(t: str) -> int:
     score = sum(v for k, v in AD_SCORE_WORDS.items() if k in t)
     if REFERRAL_URL.search(t):
         score += 4
+    # آگهی کسب‌وکار: شماره موبایل، آدرس، لوکیشن، لینک پیام‌رسان‌های دیگر
+    if re.search(r"(?<!\d)(?:\+98|0098|0)9\d{9}(?!\d)", t.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")).replace(" ", "").replace("-", "")):
+        score += 3
+    score += 2 if re.search(r"شماره تماس|تلفن تماس|جهت تماس|تماس:|آدرس:|نشانی:|لوکیشن", t) else 0
+    score += 2 if re.search(r"nshn\.ir|neshan\.org|balad\.ir|maps\.google|goo\.gl/maps", t) else 0
+    score += 3 if re.search(r"eitaa\.com|ble\.ir|rubika\.ir|splus\.ir|igap\.net", t) else 0
+    score += 1 if re.search(r"اجاره|رزرو|ارسال رایگان|پرداخت در محل|واتساپ|دایرکت", t) else 0
     if re.search(r"https?://(?!t\.me)\S+", t):   # لینک به سایت بیرونی
         score += 1
     # تبلیغ کانال دیگر: «این کانال/کاناله/کانالش» + آیدی یا لینک کانال
