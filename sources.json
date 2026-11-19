@@ -16,5 +16,6 @@
   {"name": "Hesse_Arammesh", "type": "telegram", "channel": "Hesse_Arammesh", "limit": 3},
   {"name": "cafedezhavu", "type": "telegram", "channel": "cafedezhavu", "limit": 3},
   {"name": "ZB_DR", "type": "telegram", "channel": "ZB_DR", "limit": 3},
-  {"name": "gizmiztel", "type": "telegram", "channel": "gizmiztel", "limit": 3}
+  {"name": "gizmiztel", "type": "telegram", "channel": "gizmiztel", "limit": 3},
+  {"name": "YouQofli", "type": "telegram", "channel": "YouQofli", "limit": 3}
 ]
