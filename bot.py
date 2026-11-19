@@ -42,6 +42,9 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID", "")
 API_ID = os.environ.get("API_ID", "")
 API_HASH = os.environ.get("API_HASH", "")
 TG_SESSION = os.environ.get("TG_SESSION", "")
+ALERT_CHAT_ID = os.environ.get("ALERT_CHAT_ID", "").strip()   # شناسه عددی چت خودت برای دریافت هشدار
+TEST_ALERT = os.environ.get("TEST_ALERT", "").strip().lower() == "true"
+ALERT_COOLDOWN = 6 * 3600   # یک هشدار تکراری حداکثر هر ۶ ساعت ارسال می‌شود
 
 # اسم کانال خودت (اگر CHANNEL_ID عددی است، MY_CHANNEL را در Secrets/Variables بگذار
 # یا همین‌جا دستی بنویس، مثلا "@my_channel")
@@ -59,7 +62,7 @@ AD_KEYWORDS = [
 UA = {"User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)"}
 TIMEOUT = 25
 UPLOAD_TIMEOUT = 180
-MAX_POSTS_PER_RUN = 30
+MAX_POSTS_PER_RUN = 60
 MAX_STATE_ITEMS = 5000
 SEND_DELAY = 3
 MAX_FILE_BYTES = 49 * 1024 * 1024
@@ -109,6 +112,47 @@ def replace_channels(text: str) -> str:
 def is_ad(text: str) -> bool:
     t = (text or "").lower()
     return any(k in t for k in AD_KEYWORDS)
+
+
+# ---------------------------------------------------------------- alerts
+ERRORS = {}
+
+
+def report_error(key: str, msg: str):
+    ERRORS[key] = msg[:300]
+    print(f"ALERT: {msg[:300]}")
+
+
+def send_alerts(state):
+    """هشدار خطاها را از طریق Bot API به چت خودت می‌فرستد (با جلوگیری از تکرار)."""
+    if not ERRORS:
+        return
+    if not (BOT_TOKEN and ALERT_CHAT_ID):
+        print("Alerts skipped: set BOT_TOKEN and ALERT_CHAT_ID to receive them.")
+        return
+    now = time.time()
+    last = state.setdefault("alerts", {})
+    for k in [k for k, t in last.items() if now - t > 86400]:
+        del last[k]
+    lines = []
+    for key, msg in ERRORS.items():
+        if now - last.get(key, 0) < ALERT_COOLDOWN:
+            continue
+        lines.append(f"• {msg}")
+        last[key] = now
+    if not lines:
+        return
+    text = ("⚠️ هشدار ربات خبری\n\n" + "\n".join(lines))[:3500]
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            json={"chat_id": ALERT_CHAT_ID, "text": text},
+            timeout=TIMEOUT,
+        )
+        if r.status_code != 200:
+            print(f"alert send failed: {r.status_code} {r.text[:150]}")
+    except Exception as ex:
+        print(f"alert send failed: {type(ex).__name__}")
 
 
 # ---------------------------------------------------------------- fetchers
@@ -224,6 +268,8 @@ def collect_basic(sources, seen, skip_telegram=False):
             print(f"[{src.get('name')}] fetched {len(items)}")
         except Exception as ex:
             print(f"[{src.get('name')}] ERROR: {ex}")
+            report_error(f"src:{src.get('name')}",
+                         f"منبع {src.get('name')} خطا داد: {type(ex).__name__}: {str(ex)[:150]}")
             continue
         for it in items:
             if is_ad(f"{it['title']} {it['summary']}"):
@@ -556,6 +602,8 @@ async def mt_main(sources, seen, first_run):
                 print(f"[{src.get('name')}] fetched {len(items)}")
             except Exception as ex:
                 print(f"[{src.get('name')}] ERROR: {ex!r}")
+                report_error(f"src:{src.get('name')}",
+                             f"منبع {src.get('name')} خطا داد: {type(ex).__name__}: {str(ex)[:150]}")
                 continue
             new_items += [(it, src) for it in items if it["id"] not in seen]
 
@@ -565,7 +613,7 @@ async def mt_main(sources, seen, first_run):
                 seen.add(it["id"])
             return 0, 0
 
-        posted = 0
+        posted = failed = 0
         for it, src in reversed(new_items):
             if posted >= MAX_POSTS_PER_RUN:
                 break
@@ -573,7 +621,11 @@ async def mt_main(sources, seen, first_run):
                 seen.add(it["id"])
                 posted += 1
                 time.sleep(SEND_DELAY)
-        return posted, max(0, len(new_items) - posted)
+            else:
+                failed += 1
+        if failed:
+            report_error("publish", f"ارسال {failed} پست به کانال ناموفق بود (لاگ Actions را ببین).")
+        return posted, max(0, len(new_items) - posted - failed)
     finally:
         await client.disconnect()
 
@@ -600,6 +652,9 @@ def main():
     first_run = not state["seen"]
 
     posted = pending = 0
+    crash = None
+    if TEST_ALERT:
+        report_error(f"test:{int(time.time())}", "تست: سیستم هشدار کار می‌کند ✅")
     try:
         if mtproto_enabled():
             import asyncio
@@ -614,6 +669,7 @@ def main():
                 for it, _ in new_items:
                     seen.add(it["id"])
                 new_items = []
+            failed = 0
             for it, src in reversed(new_items):  # قدیمی‌تر اول
                 if posted >= MAX_POSTS_PER_RUN:
                     break
@@ -621,10 +677,20 @@ def main():
                     seen.add(it["id"])
                     posted += 1
                     time.sleep(SEND_DELAY)
-            pending = max(0, len(new_items) - posted)
+                else:
+                    failed += 1
+            if failed:
+                report_error("publish", f"ارسال {failed} پست به کانال ناموفق بود (لاگ Actions را ببین).")
+            pending = max(0, len(new_items) - posted - failed)
+    except BaseException as ex:  # شامل SystemExit (مثلا نشست نامعتبر)
+        crash = ex
+        report_error("crash", f"ربات متوقف شد: {type(ex).__name__}: {str(ex)[:200]}")
     finally:
-        save_state(state, seen)  # حتی اگر وسط کار خطا بشه، آنچه ارسال شده دوباره ارسال نمی‌شه
+        send_alerts(state)
+        save_state(state, seen)
     print(f"Done. Posted {posted}, pending {pending}.")
+    if crash is not None:
+        raise crash
 
 
 if __name__ == "__main__":
