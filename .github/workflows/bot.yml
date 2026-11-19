@@ -34,6 +34,8 @@ jobs:
           API_HASH: ${{ secrets.API_HASH }}
           TG_SESSION: ${{ secrets.TG_SESSION }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ALERT_CHAT_ID: ${{ secrets.ALERT_CHAT_ID }}
+          TEST_ALERT: ${{ vars.TEST_ALERT }}
         run: python bot.py
 
       - name: Save state
