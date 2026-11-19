@@ -597,7 +597,7 @@ def main():
     sources = load_json(SOURCES_FILE, [])
     state = load_json(STATE_FILE, {"seen": []})
     seen = set(state["seen"])
-        first_run = not state["seen"]
+    first_run = not state["seen"]
 
     posted = pending = 0
     try:
@@ -623,7 +623,7 @@ def main():
                     time.sleep(SEND_DELAY)
             pending = max(0, len(new_items) - posted)
     finally:
-        save_state(state, seen)
+        save_state(state, seen)  # حتی اگر وسط کار خطا بشه، آنچه ارسال شده دوباره ارسال نمی‌شه
     print(f"Done. Posted {posted}, pending {pending}.")
 
 
