@@ -45,10 +45,7 @@ TG_SESSION = os.environ.get("TG_SESSION", "")
 
 # اسم کانال خودت (اگر CHANNEL_ID عددی است، MY_CHANNEL را در Secrets/Variables بگذار
 # یا همین‌جا دستی بنویس، مثلا "@my_channel")
-_cid = CHANNEL_ID.strip()
-MY_CHANNEL = os.environ.get("MY_CHANNEL", "").strip() or (
-    "" if re.fullmatch(r"-?\d+", _cid) else "@" + _cid.lstrip("@")
-)
+MY_CHANNEL = "@rooozane24"
 
 # کلمات تبلیغاتی؛ هر پستی که شامل یکی از این‌ها باشد ارسال نمی‌شود
 AD_KEYWORDS = [
@@ -62,7 +59,7 @@ AD_KEYWORDS = [
 UA = {"User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)"}
 TIMEOUT = 25
 UPLOAD_TIMEOUT = 180
-MAX_POSTS_PER_RUN = 15
+MAX_POSTS_PER_RUN = 30
 MAX_STATE_ITEMS = 5000
 SEND_DELAY = 3
 MAX_FILE_BYTES = 49 * 1024 * 1024
@@ -597,4 +594,7 @@ def main():
         print("WARNING: MY_CHANNEL is empty (CHANNEL_ID is numeric). "
               "Set MY_CHANNEL=@your_channel so source channel names can be replaced.")
 
-    sources = load_js
+    sources = load_json(SOURCES_FILE, [])
+    state = load_json(STATE_FILE, {"seen": []})
+    seen = set(state["seen"])
+    first_run = not state["s
