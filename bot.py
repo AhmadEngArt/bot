@@ -7,6 +7,7 @@ skips anything already posted (state.json) and publishes new items to your
 channel.
 
 Changes in this version:
+  * The same story from several sources is posted only once
   * Posts go out one at a time (default: 1 post every minute, newest first)
   * Source channel names (@username, t.me links) are replaced with YOUR channel
   * Website / RSS source links are kept
@@ -635,6 +636,50 @@ async def mt_publish(client, target, it, src) -> bool:
     return (await mt_send_text(client, target, full, False)) or any_ok
 
 
+# ================================================================ DUPLICATE NEWS
+# اگر چند منبع یک خبر را منتشر کنند، فقط اولی ارسال می‌شود.
+DUP_WINDOW_HOURS = 12    # متن‌های ارسال‌شده در این بازه با پست جدید مقایسه می‌شوند
+DUP_THRESHOLD = 0.6      # چه سهمی از کلمات پست کوتاه‌تر در پست دیگر باشد تا تکراری حساب شود
+DUP_MIN_WORDS = 8        # پست‌های کوتاه‌تر از این (مثلا عکس بدون متن) بررسی نمی‌شوند
+MAX_RECENT = 1500
+
+STOPWORDS = set("""
+و در به از که این آن را با است برای یک تا هم شد شده می ها های بر بود باشد کرد کرده
+خود اما یا نیز اند ای ما من تو او شما آنها ایشان دیگر پس اگر چه چون هر همه وی
+""".split())
+
+
+def fingerprint(text: str):
+    t = (text or "").lower()
+    t = re.sub(r"https?://\S+|t\.me/\S+|@\w+|#\w+", " ", t)
+    t = t.translate(str.maketrans("يكۀة‌", "یکهه "))      # یکسان‌سازی حروف عربی/فارسی و نیم‌فاصله
+    t = t.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789"))
+    words = re.findall(r"\w+", t)
+    words = {w for w in words if len(w) > 1 and w not in STOPWORDS}
+    return sorted({hashlib.md5(w.encode()).hexdigest()[:6] for w in words})
+
+
+def find_duplicate(fp, state):
+    if len(fp) < DUP_MIN_WORDS:
+        return None
+    a = set(fp)
+    cutoff = time.time() - DUP_WINDOW_HOURS * 3600
+    for r in state.get("recent", []):
+        if r["t"] < cutoff or len(r["w"]) < DUP_MIN_WORDS:
+            continue
+        b = set(r["w"])
+        if len(a & b) / min(len(a), len(b)) >= DUP_THRESHOLD:
+            return r
+    return None
+
+
+def remember(fp, link, state):
+    cutoff = time.time() - DUP_WINDOW_HOURS * 3600
+    recent = [r for r in state.get("recent", []) if r["t"] >= cutoff]
+    recent.append({"t": time.time(), "w": fp, "l": link})
+    state["recent"] = recent[-MAX_RECENT:]
+
+
 # ================================================================ PACED LOOP
 IDLE_CHECK_SEC = 60    # وقتی پست تازه‌ای نیست، هر چند ثانیه دوباره منابع چک شوند
 
@@ -663,8 +708,16 @@ async def paced_loop(collect, publish_one, state, seen):
         sent = False
         cycle_failed = 0
         for it, src in queue:
+            fp = fingerprint(f"{it.get('title', '')} {it.get('summary', '')}")
+            dup = find_duplicate(fp, state)
+            if dup:
+                print(f"duplicate skipped: {it['link']} (same as {dup.get('l')})")
+                seen.add(it["id"])
+                save_state(state, seen)
+                continue
             if await publish_one(it, src):
                 seen.add(it["id"])
+                remember(fp, it["link"], state)
                 state["last_post"] = time.time()
                 save_state(state, seen)
                 posted += 1
