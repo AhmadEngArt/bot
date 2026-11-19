@@ -757,10 +757,17 @@ def simple_price_post(state, key) -> bool:
     if not msg:
         report_error("price", "ارسال پست قیمت دلار ناموفق بود.")
         return False
-    pin_new(state, msg["message_id"],
-            pin=lambda mid: tg("pinChatMessage", {"chat_id": CHANNEL_ID, "message_id": mid,
-                                                   "disable_notification": True}),
+    pin_new(state, msg["message_id"], pin=simple_pin,
             unpin=lambda mid: tg("unpinChatMessage", {"chat_id": CHANNEL_ID, "message_id": mid}))
+    return True
+
+
+def simple_pin(mid) -> bool:
+    if not tg("pinChatMessage", {"chat_id": CHANNEL_ID, "message_id": mid, "disable_notification": True}):
+        return False
+    # تلگرام بعد از پین یک پیام خودکار «… پین شد» می‌گذارد که شماره‌اش درست بعد از پست است؛ پاکش می‌کنیم.
+    # (ربات پست‌ها را یکی‌یکی می‌فرستد، پس پیام بعدی همان پیام خودکار است.)
+    tg("deleteMessage", {"chat_id": CHANNEL_ID, "message_id": mid + 1})
     return True
 
 
@@ -905,7 +912,12 @@ async def mt_main(sources, seen, first_run, state):
 
             async def pin(mid):
                 try:
-                    await client.pin_message(target, mid, notify=False)
+                    service = await client.pin_message(target, mid, notify=False)
+                    if service is not None and getattr(service, "action", None):
+                        try:  # پاک کردن پیام خودکار «… پین شد»
+                            await client.delete_messages(target, service.id)
+                        except Exception as ex:
+                            print(f"could not delete pin notice: {ex!r}")
                     return True
                 except Exception as ex:
                     print(f"pin failed: {ex!r}")
