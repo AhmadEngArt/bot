@@ -56,6 +56,22 @@ ALERT_COOLDOWN = 6 * 3600   # یک هشدار تکراری حداکثر هر ۶ 
 # یا همین‌جا دستی بنویس، مثلا "@my_channel")
 MY_CHANNEL = "@rooozane24"
 
+# امضای پایین هر پست: با لینک عضویت، تا هر کس پست فورواردشده را دید با یک لمس عضو شود
+SIGN_TEXT = "روزانه ۲۴"
+SIGN_SLOGAN = "خبر فوری، هر روز، هر ساعت"
+
+
+def signature() -> str:
+    if not MY_CHANNEL:
+        return ""
+    link = f"https://t.me/{MY_CHANNEL.lstrip('@')}"
+    return f'📡 <a href="{link}"><b>{SIGN_TEXT}</b></a> | {SIGN_SLOGAN}'
+
+
+def signature_len() -> int:
+    """طول متن دیده‌شده‌ی امضا (برای محدودیت ۱۰۲۴ کاراکتری کپشن)."""
+    return len(f"📡 {SIGN_TEXT} | {SIGN_SLOGAN}") if MY_CHANNEL else 0
+
 # کلمات تبلیغاتی؛ هر پستی که شامل یکی از این‌ها باشد ارسال نمی‌شود
 # (کلمه‌های عمومی مثل «پشتیبانی»، «ثبت‌نام»، «سفارش» و «فیلترشکن» عمدا حذف شده‌اند،
 #  چون در خبرهای عادی زیاد می‌آیند و پست خبری را به اشتباه حذف می‌کردند)
@@ -353,13 +369,13 @@ def format_message(item, src) -> str:
     if item.get("from_telegram"):
         # پست تلگرامی: فقط اسم کانال خودت
         if MY_CHANNEL:
-            parts.append(esc(MY_CHANNEL))
+            parts.append(signature())
     else:
         # RSS و سایت: لینک منبع خبر حفظ می‌شود
         source_name = esc(src.get("name", "منبع"))
         parts.append(f'🔗 <a href="{html.escape(item["link"], quote=True)}">{source_name}</a>')
         if MY_CHANNEL:
-            parts.append(esc(MY_CHANNEL))
+            parts.append(signature())
     footer = os.environ.get("CHANNEL_FOOTER", "").strip()
     if footer:
         parts.append(esc(footer))
@@ -526,7 +542,7 @@ def footer_html(link: str, src) -> str:
     """فوتر پست‌های تلگرامی: فقط اسم کانال خودت (بدون اسم/لینک کانال مبدا)."""
     parts = []
     if MY_CHANNEL:
-        parts.append(esc(MY_CHANNEL))
+        parts.append(signature())
     f = os.environ.get("CHANNEL_FOOTER", "").strip()
     if f:
         parts.append(esc(f))
@@ -636,7 +652,7 @@ async def mt_publish(client, target, it, src) -> bool:
     raw, body = it["summary"], it.get("html", "")
     foot = footer_html(it["link"], src)
     full = "\n\n".join(p for p in (body, foot) if p)
-    plain_len = len(raw) + len(MY_CHANNEL) + len(os.environ.get("CHANNEL_FOOTER", "")) + 8
+    plain_len = len(raw) + signature_len() + len(os.environ.get("CHANNEL_FOOTER", "")) + 8
     if plain_len > 3900:
         full = "\n\n".join(p for p in (f"{esc(raw[:3800])}…", foot) if p)
         plain_len = 3900
@@ -766,7 +782,7 @@ def price_text(body_html: str, key: str) -> str:
     hhmm = key.split(" ")[1]
     parts = [f"💵 <b>قیمت دلار | ساعت {hhmm.translate(FA_DIGITS)}</b>", body_html]
     if MY_CHANNEL:
-        parts.append(esc(MY_CHANNEL))
+        parts.append(signature())
     return "\n\n".join(p for p in parts if p)
 
 
