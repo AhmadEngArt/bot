@@ -9,7 +9,8 @@ channel.
 Changes in this version:
   * Dollar price from @DO_L4 posted and pinned at 9, 12, 17, 21 Tehran time
   * The same story from several sources is posted only once
-  * Posts go out one at a time (default: 1 post every minute, newest first)
+  * Posts go out one at a time (default: 1 post every 4 minutes, newest first), with a topic label
+  * Nightly digest of the day's most important news at 22:00 Tehran
   * Source channel names (@username, t.me links) are replaced with YOUR channel
   * Website / RSS source links are kept
   * Ad posts are skipped (keyword filter)
@@ -80,7 +81,7 @@ AD_KEYWORDS = [
     "کد تخفیف", "تخفیف ویژه", "فروش ویژه", "خرید اینترنتی", "شارژ ایرانسل",
     "vpn", "وی پی ان", "وی‌پی‌ان", "ویپی ان", "ویپی‌ان", "ویپیان",   # هر پستی با کلمه VPN
     "خرید فیلترشکن", "فروش فیلترشکن", "فیلترشکن رایگان", "سرور v2ray", "خرید کانفیگ",
-    "شرط بندی", "شرط‌بندی", "کازینو", "سایت شرط", "بت فوروارد",
+    "شرط بندی", "شرط‌بندی", "کازینو", "سایت شرط", "بت فوروارد", "zomabet", "زومابت", "بونوس", "شارژ حساب",
     "کانال vip", "کپی تریدینگ", "سیگنال رایگان",
     "جهت سفارش", "جهت خرید", "برای سفارش", "با ما تماس", "لینک عضویت",
     "جوین شو", "جوین شوید", "عضو شوید", "کلیک کنید",
@@ -93,7 +94,7 @@ MAX_AGE_HOURS = 6           # پست‌های قدیمی‌تر از این (س�
 MAX_STATE_ITEMS = 5000
 
 # پخش تدریجی: هر چند دقیقه فقط یک پست (از تنظیمات Variables هم قابل تغییر است)
-POST_INTERVAL_MIN = float(os.environ.get("POST_INTERVAL_MIN") or 1)
+POST_INTERVAL_MIN = float(os.environ.get("POST_INTERVAL_MIN") or 4)
 RUN_MINUTES = float(os.environ.get("RUN_MINUTES") or 50)   # هر اجرا چند دقیقه کار کند
 MAX_FILE_BYTES = 49 * 1024 * 1024
 CAPTION_LIMIT = 1024
@@ -479,8 +480,34 @@ def collect_basic(sources, seen, skip_telegram=False):
     return new
 
 
+# ---------------------------------------------------------------- topic labels
+# برچسب موضوعی اول هر پست؛ برچسب پیش‌فرض از "tag" در sources.json، و برای خبرها
+# اگر متن درباره‌ی ورزش یا اقتصاد بود، برچسب همان موضوع
+SPORT_WORDS = ("فوتبال", "پرسپولیس", "استقلال", "سپاهان", "تراکتور", "لیگ", "جام جهانی", "تیم ملی",
+               "سرمربی", "بازیکن", "دربی", "والیبال", "کشتی", "المپیک", "فیفا", "ای‌اف‌سی", "گل ")
+ECON_WORDS = ("دلار", "بورس", "تورم", "طلا", "سکه", "بانک مرکزی", "یارانه", "قیمت", "ارز", "بنزین",
+              "اقتصاد", "حقوق", "مالیات", "تومان")
+NEWSY_TAGS = ("🔴 خبر", "🌍 جهان", "🔥 داغ")
+
+
+def tag_for(item, src) -> str:
+    tag = (src or {}).get("tag", "")
+    if not tag:
+        return ""
+    if tag in NEWSY_TAGS:
+        t = f"{item.get('title', '')} {item.get('summary', '')}"
+        if sum(1 for w in SPORT_WORDS if w in t) >= 2:
+            return "⚽ ورزش"
+        if sum(1 for w in ECON_WORDS if w in t) >= 2:
+            return "💰 اقتصاد"
+    return tag
+
+
 def format_message(item, src) -> str:
     parts = []
+    tag = tag_for(item, src)
+    if tag:
+        parts.append(f"<b>{esc(tag)}</b>")
     if item["title"]:
         parts.append(f"<b>{esc(replace_channels(item['title']))}</b>")
     if item["summary"]:
@@ -502,6 +529,9 @@ def format_message(item, src) -> str:
 
 
 # ================================================================ SIMPLE MODE (Bot API)
+LAST_SENT_ID = None   # شماره‌ی اولین پیامِ آخرین پست (برای لینک در خلاصه‌ی شبانه)
+
+
 def tg_call(method: str, payload: dict, files=None):
     """درخواست به Bot API؛ در صورت موفقیت مقدار result و در غیر این صورت None برمی‌گرداند."""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
@@ -524,7 +554,13 @@ def tg_call(method: str, payload: dict, files=None):
             time.sleep(wait)
             continue
         if r.status_code == 200:
-            return r.json().get("result", True)
+            res = r.json().get("result", True)
+            global LAST_SENT_ID
+            if isinstance(res, dict) and res.get("message_id"):
+                LAST_SENT_ID = LAST_SENT_ID or res["message_id"]
+            elif isinstance(res, list) and res and isinstance(res[0], dict):
+                LAST_SENT_ID = LAST_SENT_ID or res[0].get("message_id")
+            return res
         if r.status_code == 429:
             wait = r.json().get("parameters", {}).get("retry_after", 10)
             print(f"rate limited, sleeping {wait}s")
@@ -741,7 +777,9 @@ async def mt_send_text(client, target, text, preview) -> bool:
     if not text.strip():
         return False
     try:
-        await client.send_message(target, text, parse_mode="html", link_preview=preview)
+        msg = await client.send_message(target, text, parse_mode="html", link_preview=preview)
+        global LAST_SENT_ID
+        LAST_SENT_ID = LAST_SENT_ID or getattr(msg, "id", None)
         return True
     except Exception as ex:
         print(f"send_message failed: {ex!r}")
@@ -752,7 +790,10 @@ async def mt_send_media(client, target, msgs, caption) -> bool:
     kw = {"caption": caption, "parse_mode": "html"} if caption else {}
     objs = [m.media for m in msgs]
     try:  # ارسال مستقیم با ارجاع به فایل؛ بدون دانلود و بدون محدودیت حجم
-        await client.send_file(target, objs if len(objs) > 1 else objs[0], **kw)
+        sent = await client.send_file(target, objs if len(objs) > 1 else objs[0], **kw)
+        global LAST_SENT_ID
+        first = sent[0] if isinstance(sent, list) and sent else sent
+        LAST_SENT_ID = LAST_SENT_ID or getattr(first, "id", None)
         return True
     except Exception as ex:
         print(f"direct media send failed: {ex!r}; retrying with download")
@@ -782,6 +823,10 @@ async def mt_publish(client, target, it, src) -> bool:
 
     raw, body = it["summary"], it.get("html", "")
     foot = footer_html(it["link"], src)
+    tag = tag_for(it, src)
+    if tag:
+        body = f"<b>{esc(tag)}</b>\n\n{body}"
+        raw = f"{tag}\n\n{raw}"
     full = "\n\n".join(p for p in (body, foot) if p)
     plain_len = len(raw) + signature_len() + len(os.environ.get("CHANNEL_FOOTER", "")) + 8
     if plain_len > 3900:
@@ -852,10 +897,10 @@ def find_duplicate(fp, state):
     return None
 
 
-def remember(fp, link, state):
+def remember(fp, link, state, key=""):
     cutoff = time.time() - DUP_WINDOW_HOURS * 3600
     recent = [r for r in state.get("recent", []) if r["t"] >= cutoff]
-    recent.append({"t": time.time(), "w": fp, "l": link})
+    recent.append({"t": time.time(), "w": fp, "l": link, "k": key, "h": 1})
     state["recent"] = recent[-MAX_RECENT:]
 
 
@@ -971,11 +1016,109 @@ async def run_price_if_due(price_post, state, seen):
     print(f"price slot {key}: {'posted' if ok else 'FAILED'}")
 
 
+# ================================================================ NIGHTLY DIGEST
+# هر شب ساعت DIGEST_TIME (تهران) «مهم‌ترین خبرهای امروز»: خبرهایی که منابع بیشتری منتشرشان کرده‌اند
+DIGEST_TIME = "22:00"
+DIGEST_COUNT = 10
+DIGEST_MIN_ITEMS = 8          # اگر خبر کافی نبود، خلاصه منتشر نمی‌شود
+DIGEST_TAGS = ("🔴 خبر", "🌍 جهان", "💰 اقتصاد", "⚽ ورزش", "🔥 داغ", "🚗 خودرو", "👀 حاشیه")
+
+
+def snippet(text: str, words: int = 14) -> str:
+    t = re.sub(r"\s+", " ", text or "").strip()
+    w = t.split(" ")
+    return " ".join(w[:words]) + ("…" if len(w) > words else "")
+
+
+def log_news(state, it, src):
+    """هر خبرِ منتشرشده با شماره‌ی پیامش در کانال ثبت می‌شود (۲۴ ساعت نگه داشته می‌شود)."""
+    tag = tag_for(it, src)
+    if tag not in DIGEST_TAGS or not LAST_SENT_ID:
+        return
+    log = state.setdefault("news_log", {})
+    cutoff = time.time() - 26 * 3600
+    for k in [k for k, v in log.items() if v["t"] < cutoff]:
+        del log[k]
+    log[it["id"]] = {"t": time.time(), "m": LAST_SENT_ID, "s": snippet(it.get("title") or it.get("summary")),
+                     "g": tag, "h": 1}
+
+
+def jalali(d):
+    """تاریخ میلادی به شمسی (الگوریتم استاندارد)."""
+    gy, gm, gd = d.year, d.month, d.day
+    g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+    gy2 = gy + 1 if gm > 2 else gy
+    days = 355666 + (365 * gy) + ((gy2 + 3) // 4) - ((gy2 + 99) // 100) + ((gy2 + 399) // 400) + gd + g_d_m[gm - 1]
+    jy = -1595 + (33 * (days // 12053))
+    days %= 12053
+    jy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        jy += (days - 1) // 365
+        days = (days - 1) % 365
+    jm = 1 + days // 31 if days < 186 else 7 + (days - 186) // 30
+    jd = 1 + (days % 31 if days < 186 else (days - 186) % 30)
+    return jy, jm, jd
+
+
+FA_MONTHS = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"]
+
+
+def digest_due(state):
+    now = datetime.now(TEHRAN)
+    h, m = map(int, DIGEST_TIME.split(":"))
+    slot = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    key = slot.strftime("%Y-%m-%d")
+    late = (now - slot).total_seconds() / 60
+    if state.get("digest_done") == key or not (0 <= late <= 90):
+        return None
+    return key
+
+
+def build_digest(state):
+    now = datetime.now(TEHRAN)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    items = [v for v in state.get("news_log", {}).values() if v["t"] >= start]
+    if len(items) < DIGEST_MIN_ITEMS:
+        return None
+    items.sort(key=lambda v: (v.get("h", 1), v["t"]), reverse=True)   # پرتکرارترین در منابع، بعد جدیدترین
+    top = sorted(items[:DIGEST_COUNT], key=lambda v: v["t"])            # به ترتیب زمان
+    link = f"https://t.me/{MY_CHANNEL.lstrip('@')}"
+    jy, jm, jd = jalali(now.date())
+    date_fa = f"{jd} {FA_MONTHS[jm - 1]}".translate(FA_DIGITS)
+    lines = [f"📋 <b>مهم‌ترین خبرهای امروز</b> | {date_fa}", ""]
+    for i, v in enumerate(top, 1):
+        lines.append(f"{str(i).translate(FA_DIGITS)}. {v['g'].split(' ')[0]} "
+                     f'<a href="{link}/{v["m"]}">{esc(v["s"])}</a>')
+    lines += ["", signature()]
+    return "\n".join(lines)
+
+
+async def run_digest_if_due(send_text_fn, state, seen):
+    key = digest_due(state)
+    if not key:
+        return
+    text = build_digest(state)
+    state["digest_done"] = key
+    if not text:
+        print("digest skipped: not enough news today")
+    else:
+        try:
+            ok = await send_text_fn(text)
+        except Exception as ex:
+            ok = False
+            print(f"digest failed: {ex!r}")
+        if not ok:
+            report_error("digest", "ارسال خلاصه‌ی شبانه ناموفق بود.")
+        print(f"digest {key}: {'posted' if ok else 'FAILED'}")
+    save_state(state, seen)
+
+
 # ================================================================ PACED LOOP
 IDLE_CHECK_SEC = 60    # وقتی پست تازه‌ای نیست، هر چند ثانیه دوباره منابع چک شوند
 
 
-async def paced_loop(collect, publish_one, state, seen, price_post=None):
+async def paced_loop(collect, publish_one, state, seen, price_post=None, digest_send=None):
     """
     تا RUN_MINUTES دقیقه کار می‌کند و هر POST_INTERVAL_MIN دقیقه فقط یک پست می‌فرستد.
     زمان آخرین ارسال در state ذخیره می‌شود تا فاصله بین اجراها هم رعایت شود.
@@ -997,6 +1140,8 @@ async def paced_loop(collect, publish_one, state, seen, price_post=None):
 
         if price_post:
             await run_price_if_due(price_post, state, seen)
+        if digest_send:
+            await run_digest_if_due(digest_send, state, seen)
         try:
             collected = await collect()
             source_ok("collect")
@@ -1011,6 +1156,10 @@ async def paced_loop(collect, publish_one, state, seen, price_post=None):
             fp = fingerprint(f"{it.get('title', '')} {it.get('summary', '')}")
             dup = find_duplicate(fp, state)
             if dup:
+                dup["h"] = dup.get("h", 1) + 1          # چند منبع همین خبر را داشتند (برای خلاصه‌ی شبانه)
+                log = state.get("news_log", {}).get(dup.get("k", ""))
+                if log:
+                    log["h"] = dup["h"]
                 print(f"duplicate skipped: {it['link']} (same as {dup.get('l')})")
                 seen.add(it["id"])
                 save_state(state, seen)
@@ -1022,7 +1171,8 @@ async def paced_loop(collect, publish_one, state, seen, price_post=None):
                 ok = False
             if ok:
                 seen.add(it["id"])
-                remember(fp, it["link"], state)
+                remember(fp, it["link"], state, key=it["id"])
+                log_news(state, it, src)
                 state["last_post"] = time.time()
                 save_state(state, seen)
                 posted += 1
@@ -1095,6 +1245,8 @@ async def mt_main(sources, seen, first_run, state):
             return new_items
 
         async def publish_one(it, src):
+            global LAST_SENT_ID
+            LAST_SENT_ID = None
             return await mt_publish(client, target, it, src)
 
         async def price_post(state, key):
@@ -1133,11 +1285,15 @@ async def mt_main(sources, seen, first_run, state):
                 report_error("pin", "پین کردن پست قیمت ناموفق بود؛ دسترسی Pin Messages را چک کن.")
             return True
 
+        async def digest_send(text):
+            await client.send_message(target, text, parse_mode="html", link_preview=False)
+            return True
+
         if first_run:
             return mark_first_run(await collect(), seen)
         if SKIP_BACKLOG:
             skip_backlog(await collect(), seen, state)
-        return await paced_loop(collect, publish_one, state, seen, price_post)
+        return await paced_loop(collect, publish_one, state, seen, price_post, digest_send)
     finally:
         await client.disconnect()
 
@@ -1147,16 +1303,22 @@ async def simple_main(sources, seen, first_run, state):
         return collect_basic(sources, seen)
 
     async def publish_one(it, src):
+        global LAST_SENT_ID
+        LAST_SENT_ID = None
         return publish(it, src)
 
     async def price_post(state, key):
         return simple_price_post(state, key)
 
+    async def digest_send(text):
+        return tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML",
+                                  "disable_web_page_preview": True})
+
     if first_run:
         return mark_first_run(await collect(), seen)
     if SKIP_BACKLOG:
         skip_backlog(await collect(), seen, state)
-    return await paced_loop(collect, publish_one, state, seen, price_post)
+    return await paced_loop(collect, publish_one, state, seen, price_post, digest_send)
 
 
 # ---------------------------------------------------------------- main
