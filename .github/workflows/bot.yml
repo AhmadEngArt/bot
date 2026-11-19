@@ -2,7 +2,9 @@ name: News Bot
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    # هر اجرا حدود ۵۰ دقیقه روشن می‌ماند و هر ۵ دقیقه یک پست می‌فرستد؛
+    # اجرای بعدی در صف می‌ماند تا قبلی تمام شود، پس ربات تقریبا پیوسته کار می‌کند.
+    - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
       test_alert:
@@ -20,7 +22,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
 
@@ -32,6 +34,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Run bot
+        timeout-minutes: 60
         env:
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           CHANNEL_FOOTER: ${{ vars.CHANNEL_FOOTER }}
@@ -41,11 +44,14 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           ALERT_CHAT_ID: ${{ secrets.ALERT_CHAT_ID }}
           TEST_ALERT: ${{ github.event.inputs.test_alert == 'true' && 'true' || vars.TEST_ALERT }}
+          POST_INTERVAL_MIN: ${{ vars.POST_INTERVAL_MIN }}
+          RUN_MINUTES: ${{ vars.RUN_MINUTES }}
         run: python bot.py
 
       - name: Save state
+        if: always()
         run: |
           git config user.name "news-bot"
           git config user.email "news-bot@users.noreply.github.com"
           git add state.json
-          git diff --staged --quiet || (git commit -m "update state" && git push)
+          git diff --staged --quiet || (git commit -m "update state" && (git push || (git pull --rebase origin main && git push)))

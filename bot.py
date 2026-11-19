@@ -7,6 +7,7 @@ skips anything already posted (state.json) and publishes new items to your
 channel.
 
 Changes in this version:
+  * Posts go out one at a time (default: 1 post every 5 minutes, newest first)
   * Source channel names (@username, t.me links) are replaced with YOUR channel
   * Website / RSS source links are kept
   * Ad posts are skipped (keyword filter)
@@ -53,21 +54,28 @@ ALERT_COOLDOWN = 6 * 3600   # یک هشدار تکراری حداکثر هر ۶ 
 MY_CHANNEL = "@rooozane24"
 
 # کلمات تبلیغاتی؛ هر پستی که شامل یکی از این‌ها باشد ارسال نمی‌شود
+# (کلمه‌های عمومی مثل «پشتیبانی»، «ثبت‌نام»، «سفارش» و «فیلترشکن» عمدا حذف شده‌اند،
+#  چون در خبرهای عادی زیاد می‌آیند و پست خبری را به اشتباه حذف می‌کردند)
 AD_KEYWORDS = [
-    "تبلیغ", "تبلیغات", "پشتیبانی", "سفارش", "تخفیف", "فروش ویژه",
-    "ثبت نام", "ثبت‌نام", "کد تخفیف", "خرید اینترنتی", "خرید از", "شارژ ایرانسل",
-    "شارژ همراه", "vpn", "وی پی ان", "فیلترشکن", "شرط بندی", "شرط‌بندی",
-    "کازینو", "سایت شرط", "کانال vip", "کپی تریدینگ", "سیگنال رایگان",
-    "جهت سفارش", "با ما تماس", "لینک عضویت", "جوین شو", "جوین شوید",
+    "#تبلیغ", "#تبلیغات", "تبلیغات ویژه", "پست تبلیغاتی", "رزرو تبلیغ",
+    "کد تخفیف", "تخفیف ویژه", "فروش ویژه", "خرید اینترنتی", "شارژ ایرانسل",
+    "خرید vpn", "فروش vpn", "خرید وی پی ان", "خرید فیلترشکن", "فروش فیلترشکن",
+    "فیلترشکن رایگان", "vpn رایگان", "سرور v2ray", "خرید کانفیگ",
+    "شرط بندی", "شرط‌بندی", "کازینو", "سایت شرط", "بت فوروارد",
+    "کانال vip", "کپی تریدینگ", "سیگنال رایگان",
+    "جهت سفارش", "جهت خرید", "برای سفارش", "با ما تماس", "لینک عضویت",
+    "جوین شو", "جوین شوید", "عضو شوید", "کلیک کنید",
 ]
 
 UA = {"User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)"}
 TIMEOUT = 25
 UPLOAD_TIMEOUT = 180
-MAX_POSTS_PER_RUN = 12      # سقف ارسال در هر اجرا؛ بقیه اجرای بعدی می‌رود (پخش یکنواخت‌تر)
 MAX_AGE_HOURS = 6           # پست‌های قدیمی‌تر از این (ساعت) ارسال نمی‌شوند؛ 0 = بدون محدودیت
 MAX_STATE_ITEMS = 5000
-SEND_DELAY = 10
+
+# پخش تدریجی: هر چند دقیقه فقط یک پست (از تنظیمات Variables هم قابل تغییر است)
+POST_INTERVAL_MIN = float(os.environ.get("POST_INTERVAL_MIN") or 5)
+RUN_MINUTES = float(os.environ.get("RUN_MINUTES") or 50)   # هر اجرا چند دقیقه کار کند
 MAX_FILE_BYTES = 49 * 1024 * 1024
 CAPTION_LIMIT = 1024
 
@@ -118,15 +126,26 @@ def is_ad(text: str) -> bool:
 
 
 def prepare_queue(items):
-    """پست‌های خیلی قدیمی را حذف و بقیه را به ترتیب زمان انتشار (قدیمی‌ترین اول) مرتب می‌کند."""
+    """
+    پست‌های خیلی قدیمی را حذف و بقیه را مرتب می‌کند: جدیدترین اول.
+    (چون در هر اجرا فقط یک پست در هر چند دقیقه می‌رود، اگر صف شلوغ باشد
+    خبر تازه زودتر منتشر می‌شود و خبرهای کهنه بعد از MAX_AGE_HOURS کنار می‌روند.)
+    """
     now = time.time()
     cutoff = now - MAX_AGE_HOURS * 3600 if MAX_AGE_HOURS > 0 else 0
     ok = [
         (it, src) for it, src in items
         if src.get("scan_back") or not it.get("ts") or it["ts"] >= cutoff
     ]
-    ok.sort(key=lambda x: x[0].get("ts") or now)
+    ok.sort(key=lambda x: x[0].get("ts") or now, reverse=True)
     return ok
+
+
+class Seen(dict):
+    """لیست پست‌های ارسال‌شده با حفظ ترتیب (تا هنگام کوتاه کردن، قدیمی‌ترین‌ها حذف شوند)."""
+    def add(self, key):
+        self.pop(key, None)
+        self[key] = None
 
 
 def entry_ts(e):
@@ -392,20 +411,19 @@ METHODS = {"photo": ("sendPhoto", "photo", "photo.jpg"),
            "voice": ("sendVoice", "voice", "voice.ogg")}
 
 
+# تلگرام معمولا نمی‌تواند فایل را مستقیم از لینک t.me بگیرد (خطای failed to get HTTP URL content)،
+# پس اول خودمان دانلود و آپلود می‌کنیم و فقط اگر دانلود نشد، ارسال با لینک را امتحان می‌کنیم.
 def send_single(m, caption):
     method, field, fname = METHODS[m["type"]]
-    payload = {"chat_id": CHANNEL_ID, field: m["url"]}
+    payload = {"chat_id": CHANNEL_ID}
     if caption:
         payload.update(caption=caption, parse_mode="HTML")
     if m["type"] == "video":
         payload["supports_streaming"] = True
-    if tg(method, payload):
-        return True
     blob = download(m["url"])
-    if not blob:
-        return False
-    payload.pop(field)
-    return tg(method, payload, files={field: (fname, blob)})
+    if blob:
+        return tg(method, payload, files={field: (fname, blob)})
+    return tg(method, {**payload, field: m["url"]})
 
 
 def send_group(visual, caption):
@@ -418,15 +436,16 @@ def send_group(visual, caption):
             arr.append(entry)
         return arr
 
-    if tg("sendMediaGroup", {"chat_id": CHANNEL_ID, "media": build(False)}):
-        return True
     files = {}
     for i, m in enumerate(visual):
         blob = download(m["url"])
         if not blob:
-            return False
+            files = None
+            break
         files[f"f{i}"] = (f"f{i}", blob)
-    return tg("sendMediaGroup", {"chat_id": CHANNEL_ID, "media": build(True)}, files=files)
+    if files:
+        return tg("sendMediaGroup", {"chat_id": CHANNEL_ID, "media": build(True)}, files=files)
+    return tg("sendMediaGroup", {"chat_id": CHANNEL_ID, "media": build(False)})
 
 
 def publish(item, src) -> bool:
@@ -616,7 +635,66 @@ async def mt_publish(client, target, it, src) -> bool:
     return (await mt_send_text(client, target, full, False)) or any_ok
 
 
-async def mt_main(sources, seen, first_run):
+# ================================================================ PACED LOOP
+IDLE_CHECK_SEC = 120   # وقتی پست تازه‌ای نیست، هر چند ثانیه دوباره منابع چک شوند
+
+
+async def paced_loop(collect, publish_one, state, seen):
+    """
+    تا RUN_MINUTES دقیقه کار می‌کند و هر POST_INTERVAL_MIN دقیقه فقط یک پست می‌فرستد.
+    زمان آخرین ارسال در state ذخیره می‌شود تا فاصله بین اجراها هم رعایت شود.
+    """
+    import asyncio
+
+    deadline = time.time() + RUN_MINUTES * 60
+    interval = POST_INTERVAL_MIN * 60
+    failed_ids = set()
+    posted = failed = pending = 0
+
+    while True:
+        wait = state.get("last_post", 0) + interval - time.time()
+        if wait > 0:
+            if time.time() + wait > deadline:
+                break
+            print(f"waiting {int(wait)}s until next post")
+            await asyncio.sleep(wait)
+
+        queue = [(it, s) for it, s in prepare_queue(await collect()) if it["id"] not in failed_ids]
+        sent = False
+        cycle_failed = 0
+        for it, src in queue:
+            if await publish_one(it, src):
+                seen.add(it["id"])
+                state["last_post"] = time.time()
+                save_state(state, seen)
+                posted += 1
+                sent = True
+                print(f"posted {it['link']}")
+                break
+            failed_ids.add(it["id"])
+            failed += 1
+            cycle_failed += 1
+        pending = max(0, len(queue) - (1 if sent else 0) - cycle_failed)
+        print(f"queue: {len(queue)} waiting")
+
+        if not sent:
+            if time.time() + IDLE_CHECK_SEC > deadline:
+                break
+            await asyncio.sleep(IDLE_CHECK_SEC)
+
+    if failed:
+        report_error("publish", f"ارسال {failed} پست به کانال ناموفق بود (لاگ Actions را ببین).")
+    return posted, pending
+
+
+def mark_first_run(items, seen):
+    print("First run: marking existing items as seen without posting.")
+    for it, _ in items:
+        seen.add(it["id"])
+    return 0, 0
+
+
+async def mt_main(sources, seen, first_run, state):
     from telethon import TelegramClient
     from telethon.sessions import StringSession
 
@@ -634,52 +712,54 @@ async def mt_main(sources, seen, first_run):
             await client.get_dialogs()  # برای شناسایی کانال‌هایی که با شناسه‌ی عددی داده شده‌اند
         target = await client.get_entity(parse_peer(CHANNEL_ID))
 
-        new_items = collect_basic(sources, seen, skip_telegram=True)
-        for src in sources:
-            if src.get("type") != "telegram":
-                continue
-            try:
-                items = await mt_fetch(client, src)
-                print(f"[{src.get('name')}] fetched {len(items)}")
-            except Exception as ex:
-                print(f"[{src.get('name')}] ERROR: {ex!r}")
-                report_error(f"src:{src.get('name')}",
-                             f"منبع {src.get('name')} خطا داد: {type(ex).__name__}: {str(ex)[:150]}")
-                continue
-            new_items += [(it, src) for it in items if it["id"] not in seen]
+        async def collect():
+            new_items = collect_basic(sources, seen, skip_telegram=True)
+            for src in sources:
+                if src.get("type") != "telegram":
+                    continue
+                try:
+                    items = await mt_fetch(client, src)
+                    print(f"[{src.get('name')}] fetched {len(items)}")
+                except Exception as ex:
+                    print(f"[{src.get('name')}] ERROR: {ex!r}")
+                    report_error(f"src:{src.get('name')}",
+                                 f"منبع {src.get('name')} خطا داد: {type(ex).__name__}: {str(ex)[:150]}")
+                    continue
+                new_items += [(it, src) for it in items if it["id"] not in seen]
+            return new_items
+
+        async def publish_one(it, src):
+            return await mt_publish(client, target, it, src)
 
         if first_run:
-            print("First run: marking existing items as seen without posting.")
-            for it, _ in new_items:
-                seen.add(it["id"])
-            return 0, 0
-
-        new_items = prepare_queue(new_items)
-        posted = failed = 0
-        for it, src in new_items:
-            if posted >= MAX_POSTS_PER_RUN:
-                break
-            if await mt_publish(client, target, it, src):
-                seen.add(it["id"])
-                posted += 1
-                time.sleep(SEND_DELAY)
-            else:
-                failed += 1
-        if failed:
-            report_error("publish", f"ارسال {failed} پست به کانال ناموفق بود (لاگ Actions را ببین).")
-        return posted, max(0, len(new_items) - posted - failed)
+            return mark_first_run(await collect(), seen)
+        return await paced_loop(collect, publish_one, state, seen)
     finally:
         await client.disconnect()
 
 
+async def simple_main(sources, seen, first_run, state):
+    async def collect():
+        return collect_basic(sources, seen)
+
+    async def publish_one(it, src):
+        return publish(it, src)
+
+    if first_run:
+        return mark_first_run(await collect(), seen)
+    return await paced_loop(collect, publish_one, state, seen)
+
+
 # ---------------------------------------------------------------- main
 def save_state(state, seen):
-    ids = list(seen)
+    ids = list(seen)  # ترتیب حفظ می‌شود: قدیمی‌ترین اول
     state["seen"] = ids[-MAX_STATE_ITEMS:] if len(ids) > MAX_STATE_ITEMS else ids
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def main():
+    import asyncio
+
     if not CHANNEL_ID:
         sys.exit("CHANNEL_ID must be set.")
     if not mtproto_enabled() and not BOT_TOKEN:
@@ -690,41 +770,21 @@ def main():
 
     sources = load_json(SOURCES_FILE, [])
     state = load_json(STATE_FILE, {"seen": []})
-    seen = set(state["seen"])
-    first_run = not state["seen"]
+    seen = Seen.fromkeys(state.get("seen", []))
+    first_run = not seen
 
     posted = pending = 0
     crash = None
     if TEST_ALERT:
         report_error(f"test:{int(time.time())}", "تست: سیستم هشدار کار می‌کند ✅")
+    print(f"Pacing: 1 post every {POST_INTERVAL_MIN:g} min, running {RUN_MINUTES:g} min")
     try:
         if mtproto_enabled():
-            import asyncio
-
             print("Mode: full (MTProto)")
-            posted, pending = asyncio.run(mt_main(sources, seen, first_run))
+            posted, pending = asyncio.run(mt_main(sources, seen, first_run, state))
         else:
             print("Mode: simple (Bot API)")
-            new_items = collect_basic(sources, seen)
-            if first_run:
-                print("First run: marking existing items as seen without posting.")
-                for it, _ in new_items:
-                    seen.add(it["id"])
-                new_items = []
-            new_items = prepare_queue(new_items)
-            failed = 0
-            for it, src in new_items:  # قدیمی‌ترین اول
-                if posted >= MAX_POSTS_PER_RUN:
-                    break
-                if publish(it, src):
-                    seen.add(it["id"])
-                    posted += 1
-                    time.sleep(SEND_DELAY)
-                else:
-                    failed += 1
-            if failed:
-                report_error("publish", f"ارسال {failed} پست به کانال ناموفق بود (لاگ Actions را ببین).")
-            pending = max(0, len(new_items) - posted - failed)
+            posted, pending = asyncio.run(simple_main(sources, seen, first_run, state))
     except BaseException as ex:  # شامل SystemExit (مثلا نشست نامعتبر)
         crash = ex
         report_error("crash", f"ربات متوقف شد: {type(ex).__name__}: {str(ex)[:200]}")
