@@ -1,86 +1,16 @@
 [
-  {
-    "name": "NE_WG",
-    "type": "telegram",
-    "channel": "NE_WG",
-    "limit": 10
-  },
-  {
-    "name": "KHODRO_AKHBAR",
-    "type": "telegram",
-    "channel": "KHODRO_AKHBAR",
-    "limit": 10
-  },
-  {
-    "name": "sepah",
-    "type": "telegram",
-    "channel": "sepah",
-    "limit": 10
-  },
-  {
-    "name": "naasheh_ir",
-    "type": "telegram",
-    "channel": "naasheh_ir",
-    "limit": 10
-  },
-  {
-    "name": "kh_mx",
-    "type": "telegram",
-    "channel": "kh_mx",
-    "limit": 10
-  },
-  {
-    "name": "Farsna",
-    "type": "telegram",
-    "channel": "Farsna",
-    "limit": 10
-  },
-  {
-    "name": "bbcpersian",
-    "type": "telegram",
-    "channel": "bbcpersian",
-    "limit": 10
-  },
-  {
-    "name": "VahidOnline",
-    "type": "telegram",
-    "channel": "VahidOnline",
-    "limit": 10
-  },
-  {
-    "name": "mostanad_COM",
-    "type": "telegram",
-    "channel": "mostanad_COM",
-    "limit": 10
-  },
-  {
-    "name": "KiriFutballl",
-    "type": "telegram",
-    "channel": "KiriFutballl",
-    "limit": 10
-  },
-  {
-    "name": "periodi",
-    "type": "telegram",
-    "channel": "periodi",
-    "limit": 10
-  },
-  {
-    "name": "hashieh",
-    "type": "telegram",
-    "channel": "hashieh",
-    "limit": 10
-  },
-  {
-    "name": "Jahan_Fouri",
-    "type": "telegram",
-    "channel": "Jahan_Fouri",
-    "limit": 10
-  },
-  {
-    "name": "akhbarefori",
-    "type": "telegram",
-    "channel": "akhbarefori",
-    "limit": 10
-  }
+  {"name": "NE_WG", "type": "telegram", "channel": "NE_WG", "limit": 2},
+  {"name": "KHODRO_AKHBAR", "type": "telegram", "channel": "KHODRO_AKHBAR", "limit": 2},
+  {"name": "sepah", "type": "telegram", "channel": "sepah", "limit": 2},
+  {"name": "naasheh_ir", "type": "telegram", "channel": "naasheh_ir", "limit": 2},
+  {"name": "kh_mx", "type": "telegram", "channel": "kh_mx", "limit": 2},
+  {"name": "Farsna", "type": "telegram", "channel": "Farsna", "limit": 2},
+  {"name": "bbcpersian", "type": "telegram", "channel": "bbcpersian", "limit": 2},
+  {"name": "VahidOnline", "type": "telegram", "channel": "VahidOnline", "limit": 2},
+  {"name": "mostanad_COM", "type": "telegram", "channel": "mostanad_COM", "limit": 2},
+  {"name": "KiriFutballl", "type": "telegram", "channel": "KiriFutballl", "limit": 2},
+  {"name": "periodi", "type": "telegram", "channel": "periodi", "limit": 2},
+  {"name": "hashieh", "type": "telegram", "channel": "hashieh", "limit": 2},
+  {"name": "Jahan_Fouri", "type": "telegram", "channel": "Jahan_Fouri", "limit": 2},
+  {"name": "akhbarefori", "type": "telegram", "channel": "akhbarefori", "limit": 2}
 ]
