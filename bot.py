@@ -129,14 +129,29 @@ def esc(s: str) -> str:
     return html.escape(s, quote=False)
 
 
+_DECOR = r"[^\w.!?،؛…»)\]\n<>@/]*"     # ایموجی، فاصله و علامت‌های تزئینی کنار آیدی (نه حرف و نه پایان جمله)
+_MENTION = r"(?:(?:https?://)?(?:t\.me|telegram\.me)/[\w/+\-?=]+|(?<![\w.])@\s?[A-Za-z]\w{3,})"
+
+
 def replace_channels(text: str) -> str:
-    """@username و لینک t.me را با کانال خودت عوض می‌کند (لینک سایت‌ها دست‌نخورده)."""
-    if not text or not MY_CHANNEL:
+    """
+    آیدی و لینک t.me کانال‌های مبدا را کامل حذف می‌کند (همراه ایموجی‌های کنارش، مثل «📡 @VahidOnline»
+    یا «@ VahidOOnLine»)؛ امضای کانال خودت جداگانه پایین پست می‌آید. لینک سایت‌ها دست‌نخورده می‌ماند.
+    """
+    if not text:
         return text
-    my_link = f"https://t.me/{MY_CHANNEL.lstrip('@')}"
-    text = re.sub(r"(?:https?://)?t\.me/[\w/+\-]+", my_link, text)
-    text = re.sub(r"(?<![\w./])@\w{4,}", MY_CHANNEL, text)
-    return text
+    # لینک‌های HTML به تلگرام (در حالت کامل) با متنشان حذف شوند
+    text = re.sub(r'<a [^>]*href="(?:https?://)?(?:t\.me|telegram\.me)/[^"]*"[^>]*>.*?</a>', " ", text, flags=re.S)
+    for _ in range(5):   # چند آیدی پشت سر هم
+        new = re.sub(_DECOR + _MENTION + _DECOR, " ", text)
+        if new == text:
+            break
+        text = new
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"[ \t]+([،.!?؛:])", r"\1", text)
+    text = re.sub(r" *\n *", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 # نشانه‌های تبلیغ‌های شبکه‌های تبلیغاتی تلگرام
