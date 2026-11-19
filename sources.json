@@ -1,7 +1,6 @@
 [
   {"name": "NE_WG", "type": "telegram", "channel": "NE_WG", "limit": 3},
   {"name": "KHODRO_AKHBAR", "type": "telegram", "channel": "KHODRO_AKHBAR", "limit": 3},
-  {"name": "sepah", "type": "telegram", "channel": "sepah", "limit": 3},
   {"name": "naasheh_ir", "type": "telegram", "channel": "naasheh_ir", "limit": 3},
   {"name": "kh_mx", "type": "telegram", "channel": "kh_mx", "limit": 3},
   {"name": "Farsna", "type": "telegram", "channel": "Farsna", "limit": 5},
