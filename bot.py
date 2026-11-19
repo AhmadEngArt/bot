@@ -233,7 +233,14 @@ def extract_media(msg):
     for au in msg.select("audio.tgme_widget_message_voice"):
         if au.get("src"):
             media.append({"type": "voice", "url": au["src"]})
-    return media
+    # یک فایل گاهی دو بار در صفحه آمده؛ تکراری‌ها حذف می‌شوند
+    uniq, keys = [], set()
+    for m in media:
+        k = m["url"].split("?")[0]
+        if k not in keys:
+            keys.add(k)
+            uniq.append(m)
+    return uniq
 
 
 def fetch_telegram_channel(src):
@@ -444,14 +451,30 @@ def send_group(visual, caption):
             arr.append(entry)
         return arr
 
-    files = {}
-    for i, m in enumerate(visual):
+    blobs, hashes, kept = [], set(), []
+    for m in visual:
         blob = download(m["url"])
         if not blob:
-            files = None
+            blobs = None
             break
-        files[f"f{i}"] = (f"f{i}", blob)
-    if files:
+        h = hashlib.md5(blob).hexdigest()
+        if h in hashes:          # همان فایل دوباره آمده؛ فقط یک بار ارسال شود
+            print("duplicate media in post skipped")
+            continue
+        hashes.add(h)
+        kept.append(m)
+        blobs.append(blob)
+    if blobs is not None:
+        visual = kept
+        if len(visual) == 1:
+            method, field, fname = METHODS[visual[0]["type"]]
+            payload = {"chat_id": CHANNEL_ID}
+            if caption:
+                payload.update(caption=caption, parse_mode="HTML")
+            if visual[0]["type"] == "video":
+                payload["supports_streaming"] = True
+            return tg(method, payload, files={field: (fname, blobs[0])})
+        files = {f"f{i}": (f"f{i}", b) for i, b in enumerate(blobs)}
         return tg("sendMediaGroup", {"chat_id": CHANNEL_ID, "media": build(True)}, files=files)
     return tg("sendMediaGroup", {"chat_id": CHANNEL_ID, "media": build(False)})
 
