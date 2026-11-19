@@ -157,7 +157,8 @@ def replace_channels(text: str) -> str:
 # نشانه‌های تبلیغ‌های شبکه‌های تبلیغاتی تلگرام
 AD_PATTERNS = [
     re.compile(r"#(?!(?:13|14|19|20)\d\d(?!\d))\d{4,7}(?!\d)"),   # کد تبلیغ مثل #28083 (سال‌ها مثل #1401 نه)
-    re.compile(r"(?:ثبت[ \u200c]?نام|دانلود|نصب|خرید) کن(?:ه)?(?![\w\u200c])"),   # «ثبت‌نام کن/کنه»، نه «کنند»
+    re.compile(r"(?:ثبت[ \u200c]?نام|دانلود|نصب|خرید) کن(?:ه)?(?![\w\u200c])"),
+    re.compile(r"(?:t\.me|telegram\.me)/(?:\+|joinchat/)"),          # لینک دعوت کانال/گروه = تبلیغ کانال   # «ثبت‌نام کن/کنه»، نه «کنند»
     re.compile(r"(?:https?://)?(?:www\.)?(?:bo0\.ir|yun\.ir|bit\.ly|b2n\.ir|l1nk\.ir|zaya\.io|"
                r"tinyurl\.com|cutt\.ly|rebrand\.ly|shorturl\.at|t\.co|goo\.gl|is\.gd|s\.id|ln\.run|"
                r"yek\.link|ylnk\.ir|tapsell|yektanet)", re.I),   # لینک کوتاه و شبکه‌های تبلیغاتی
@@ -189,6 +190,13 @@ def ad_score(t: str) -> int:
     if REFERRAL_URL.search(t):
         score += 4
     if re.search(r"https?://(?!t\.me)\S+", t):   # لینک به سایت بیرونی
+        score += 1
+    # تبلیغ کانال دیگر: «این کانال/کاناله/کانالش» + آیدی یا لینک کانال
+    score += 3 if re.search(r"این کانال|کاناله(?![\w])", t) else 0
+    score += 2 if re.search(r"کانالش|کانالا(?![\w])|کانال‌ها رو|عضو کانال", t) else 0
+    if re.search(r"(?:t\.me|telegram\.me)/[A-Za-z]\w{3,}(?!/\d)", t):   # لینک به یک کانال (نه یک پست)
+        score += 2
+    if re.search(r"(?<![\w.])@\s?[A-Za-z]\w{3,}", t):
         score += 1
     return score
 
