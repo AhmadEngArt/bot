@@ -7,7 +7,7 @@ skips anything already posted (state.json) and publishes new items to your
 channel.
 
 Changes in this version:
-  * Posts go out one at a time (default: 1 post every 5 minutes, newest first)
+  * Posts go out one at a time (default: 1 post every minute, newest first)
   * Source channel names (@username, t.me links) are replaced with YOUR channel
   * Website / RSS source links are kept
   * Ad posts are skipped (keyword filter)
@@ -74,7 +74,7 @@ MAX_AGE_HOURS = 6           # پست‌های قدیمی‌تر از این (س�
 MAX_STATE_ITEMS = 5000
 
 # پخش تدریجی: هر چند دقیقه فقط یک پست (از تنظیمات Variables هم قابل تغییر است)
-POST_INTERVAL_MIN = float(os.environ.get("POST_INTERVAL_MIN") or 5)
+POST_INTERVAL_MIN = float(os.environ.get("POST_INTERVAL_MIN") or 1)
 RUN_MINUTES = float(os.environ.get("RUN_MINUTES") or 50)   # هر اجرا چند دقیقه کار کند
 MAX_FILE_BYTES = 49 * 1024 * 1024
 CAPTION_LIMIT = 1024
@@ -636,7 +636,7 @@ async def mt_publish(client, target, it, src) -> bool:
 
 
 # ================================================================ PACED LOOP
-IDLE_CHECK_SEC = 120   # وقتی پست تازه‌ای نیست، هر چند ثانیه دوباره منابع چک شوند
+IDLE_CHECK_SEC = 60    # وقتی پست تازه‌ای نیست، هر چند ثانیه دوباره منابع چک شوند
 
 
 async def paced_loop(collect, publish_one, state, seen):
