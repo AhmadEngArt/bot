@@ -2,8 +2,6 @@
   {"name": "NE_WG", "type": "telegram", "channel": "NE_WG", "limit": 3, "tag": "🔴 خبر"},
   {"name": "KHODRO_AKHBAR", "type": "telegram", "channel": "KHODRO_AKHBAR", "limit": 3, "tag": "🚗 خودرو"},
   {"name": "naasheh_ir", "type": "telegram", "channel": "naasheh_ir", "limit": 3, "tag": "🔥 داغ"},
-  {"name": "kh_mx", "type": "telegram", "channel": "kh_mx", "limit": 3, "tag": "🔴 خبر"},
-  {"name": "Farsna", "type": "telegram", "channel": "Farsna", "limit": 5, "tag": "🔴 خبر"},
   {"name": "VahidOnline", "type": "telegram", "channel": "VahidOnline", "limit": 5, "tag": "🔴 خبر"},
   {"name": "mostanad_COM", "type": "telegram", "channel": "mostanad_COM", "limit": 3, "tag": "🎬 مستند"},
   {"name": "KiriFutballl", "type": "telegram", "channel": "KiriFutballl", "limit": 3, "tag": "⚽ ورزش"},
