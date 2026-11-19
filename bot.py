@@ -6,20 +6,14 @@ Reads sources from sources.json (RSS feeds, plain websites, Telegram channels),
 skips anything already posted (state.json) and publishes new items to your
 channel.
 
-Two modes
----------
-1) Full mode (MTProto, recommended) - enabled when API_ID, API_HASH and
-   TG_SESSION are set. The bot logs in with a Telegram account (via Telethon)
-   which must be an admin of your target channel. This supports:
-     * private channels the account has joined
-     * photos, videos of any size, voice, music/audio and other files
-     * albums (kept together as one post)
-     * original text formatting
-2) Simple mode (Bot API) - when only BOT_TOKEN is set. Public channels only,
-   via the t.me/s/<name> preview. Photos, small videos and voice only.
+Changes in this version:
+  * Source channel names (@username, t.me links) are replaced with YOUR channel
+  * Website / RSS source links are kept
+  * Ad posts are skipped (keyword filter)
 
 Env vars (GitHub Secrets):
   CHANNEL_ID  - e.g. @my_channel  (or -100123456789)
+  MY_CHANNEL  - optional, e.g. @my_channel (REQUIRED if CHANNEL_ID is numeric)
   BOT_TOKEN   - simple mode only
   API_ID, API_HASH, TG_SESSION - full mode (see gen_session.py)
 """
@@ -49,13 +43,29 @@ API_ID = os.environ.get("API_ID", "")
 API_HASH = os.environ.get("API_HASH", "")
 TG_SESSION = os.environ.get("TG_SESSION", "")
 
+# اسم کانال خودت (اگر CHANNEL_ID عددی است، MY_CHANNEL را در Secrets/Variables بگذار
+# یا همین‌جا دستی بنویس، مثلا "@my_channel")
+_cid = CHANNEL_ID.strip()
+MY_CHANNEL = os.environ.get("MY_CHANNEL", "").strip() or (
+    "" if re.fullmatch(r"-?\d+", _cid) else "@" + _cid.lstrip("@")
+)
+
+# کلمات تبلیغاتی؛ هر پستی که شامل یکی از این‌ها باشد ارسال نمی‌شود
+AD_KEYWORDS = [
+    "تبلیغ", "تبلیغات", "پشتیبانی", "سفارش", "تخفیف", "فروش ویژه",
+    "ثبت نام", "ثبت‌نام", "کد تخفیف", "خرید اینترنتی", "خرید از", "شارژ ایرانسل",
+    "شارژ همراه", "vpn", "وی پی ان", "فیلترشکن", "شرط بندی", "شرط‌بندی",
+    "کازینو", "سایت شرط", "کانال vip", "کپی تریدینگ", "سیگنال رایگان",
+    "جهت سفارش", "با ما تماس", "لینک عضویت", "جوین شو", "جوین شوید",
+]
+
 UA = {"User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)"}
 TIMEOUT = 25
 UPLOAD_TIMEOUT = 180
-MAX_POSTS_PER_RUN = 15      # سقف ارسال در هر اجرا (جلوگیری از اسپم و محدودیت تلگرام)
-MAX_STATE_ITEMS = 5000      # تعداد آیتم‌های ذخیره‌شده برای جلوگیری از تکرار
-SEND_DELAY = 3              # ثانیه بین ارسال‌ها
-MAX_FILE_BYTES = 49 * 1024 * 1024   # فقط حالت ساده: سقف آپلود Bot API
+MAX_POSTS_PER_RUN = 15
+MAX_STATE_ITEMS = 5000
+SEND_DELAY = 3
+MAX_FILE_BYTES = 49 * 1024 * 1024
 CAPTION_LIMIT = 1024
 
 
@@ -87,6 +97,21 @@ def load_json(path: Path, default):
 
 def esc(s: str) -> str:
     return html.escape(s, quote=False)
+
+
+def replace_channels(text: str) -> str:
+    """@username و لینک t.me را با کانال خودت عوض می‌کند (لینک سایت‌ها دست‌نخورده)."""
+    if not text or not MY_CHANNEL:
+        return text
+    my_link = f"https://t.me/{MY_CHANNEL.lstrip('@')}"
+    text = re.sub(r"(?:https?://)?t\.me/[\w/+\-]+", my_link, text)
+    text = re.sub(r"(?<![\w./])@\w{4,}", MY_CHANNEL, text)
+    return text
+
+
+def is_ad(text: str) -> bool:
+    t = (text or "").lower()
+    return any(k in t for k in AD_KEYWORDS)
 
 
 # ---------------------------------------------------------------- fetchers
@@ -140,6 +165,9 @@ def fetch_telegram_channel(src):
             continue
         text_el = msg.select_one(".tgme_widget_message_text")
         text = clean(text_el.get_text(" ", strip=True), 700) if text_el else ""
+        if is_ad(text):
+            continue
+        text = replace_channels(text)
         media = extract_media(msg)
         if not media and len(text) < 20:
             continue
@@ -201,6 +229,8 @@ def collect_basic(sources, seen, skip_telegram=False):
             print(f"[{src.get('name')}] ERROR: {ex}")
             continue
         for it in items:
+            if is_ad(f"{it['title']} {it['summary']}"):
+                continue
             if it["id"] not in seen:
                 new.append((it, src))
     return new
@@ -209,11 +239,19 @@ def collect_basic(sources, seen, skip_telegram=False):
 def format_message(item, src) -> str:
     parts = []
     if item["title"]:
-        parts.append(f"<b>{esc(item['title'])}</b>")
+        parts.append(f"<b>{esc(replace_channels(item['title']))}</b>")
     if item["summary"]:
-        parts.append(esc(item["summary"]))
-    source_name = esc(src.get("name", "منبع"))
-    parts.append(f'🔗 <a href="{html.escape(item["link"], quote=True)}">{source_name}</a>')
+        parts.append(esc(replace_channels(item["summary"])))
+    if item.get("from_telegram"):
+        # پست تلگرامی: فقط اسم کانال خودت
+        if MY_CHANNEL:
+            parts.append(esc(MY_CHANNEL))
+    else:
+        # RSS و سایت: لینک منبع خبر حفظ می‌شود
+        source_name = esc(src.get("name", "منبع"))
+        parts.append(f'🔗 <a href="{html.escape(item["link"], quote=True)}">{source_name}</a>')
+        if MY_CHANNEL:
+            parts.append(esc(MY_CHANNEL))
     footer = os.environ.get("CHANNEL_FOOTER", "").strip()
     if footer:
         parts.append(esc(footer))
@@ -356,7 +394,10 @@ def parse_peer(value):
 
 
 def footer_html(link: str, src) -> str:
-    parts = [f'🔗 <a href="{html.escape(link, quote=True)}">{esc(src.get("name", "منبع"))}</a>']
+    """فوتر پست‌های تلگرامی: فقط اسم کانال خودت (بدون اسم/لینک کانال مبدا)."""
+    parts = []
+    if MY_CHANNEL:
+        parts.append(esc(MY_CHANNEL))
     f = os.environ.get("CHANNEL_FOOTER", "").strip()
     if f:
         parts.append(esc(f))
@@ -393,6 +434,10 @@ async def mt_fetch(client, src):
         grp = sorted(groups[key], key=lambda x: x.id)
         raw = next((m.raw_text for m in grp if m.raw_text), "") or ""
         body = next((m.text for m in grp if m.raw_text), "") or ""
+        if is_ad(raw):
+            continue
+        raw = replace_channels(raw)
+        body = replace_channels(body)
         media_msgs = [m for m in grp if (m.photo or m.document)]
         if not media_msgs and len(raw) < 20:
             continue
@@ -412,6 +457,8 @@ async def mt_fetch(client, src):
 
 
 async def mt_send_text(client, target, text, preview) -> bool:
+    if not text.strip():
+        return False
     try:
         await client.send_message(target, text, parse_mode="html", link_preview=preview)
         return True
@@ -454,17 +501,17 @@ async def mt_publish(client, target, it, src) -> bool:
 
     raw, body = it["summary"], it.get("html", "")
     foot = footer_html(it["link"], src)
-    full = f"{body}\n\n{foot}" if body else foot
-    plain_len = len(raw) + len(src.get("name", "")) + len(os.environ.get("CHANNEL_FOOTER", "")) + 8
+    full = "\n\n".join(p for p in (body, foot) if p)
+    plain_len = len(raw) + len(MY_CHANNEL) + len(os.environ.get("CHANNEL_FOOTER", "")) + 8
     if plain_len > 3900:
-        full = f"{esc(raw[:3800])}…\n\n{foot}"
+        full = "\n\n".join(p for p in (f"{esc(raw[:3800])}…", foot) if p)
         plain_len = 3900
 
     msgs = it.get("msgs") or []
     if not msgs:
         return await mt_send_text(client, target, full, False)
 
-    cap = full if plain_len <= CAPTION_LIMIT - 24 else None
+    cap = full if (full and plain_len <= CAPTION_LIMIT - 24) else None
     visual = [m for m in msgs if is_visual(m)][:10]
     others = [m for m in msgs if not is_visual(m)]
     any_ok = captioned = False
@@ -479,6 +526,8 @@ async def mt_publish(client, target, it, src) -> bool:
             captioned = captioned or bool(c)
 
     if captioned:
+        return True
+    if any_ok and not full:
         return True
     return (await mt_send_text(client, target, full, False)) or any_ok
 
@@ -544,39 +593,8 @@ def main():
         sys.exit("CHANNEL_ID must be set.")
     if not mtproto_enabled() and not BOT_TOKEN:
         sys.exit("Set BOT_TOKEN (simple mode) or API_ID + API_HASH + TG_SESSION (full mode).")
+    if not MY_CHANNEL:
+        print("WARNING: MY_CHANNEL is empty (CHANNEL_ID is numeric). "
+              "Set MY_CHANNEL=@your_channel so source channel names can be replaced.")
 
-    sources = load_json(SOURCES_FILE, [])
-    state = load_json(STATE_FILE, {"seen": []})
-    seen = set(state["seen"])
-    first_run = not state["seen"]
-
-    posted = pending = 0
-    try:
-        if mtproto_enabled():
-            import asyncio
-
-            print("Mode: full (MTProto)")
-            posted, pending = asyncio.run(mt_main(sources, seen, first_run))
-        else:
-            print("Mode: simple (Bot API)")
-            new_items = collect_basic(sources, seen)
-            if first_run:
-                print("First run: marking existing items as seen without posting.")
-                for it, _ in new_items:
-                    seen.add(it["id"])
-                new_items = []
-            for it, src in reversed(new_items):  # قدیمی‌تر اول
-                if posted >= MAX_POSTS_PER_RUN:
-                    break
-                if publish(it, src):
-                    seen.add(it["id"])
-                    posted += 1
-                    time.sleep(SEND_DELAY)
-            pending = max(0, len(new_items) - posted)
-    finally:
-        save_state(state, seen)  # حتی اگر وسط کار خطا بشه، آنچه ارسال شده دوباره ارسال نمی‌شه
-    print(f"Done. Posted {posted}, pending {pending}.")
-
-
-if __name__ == "__main__":
-    main()
+    sources = load_js
