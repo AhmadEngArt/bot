@@ -347,7 +347,10 @@ def main():
         sig, info = signal_at(candles[-1000:])
         b = candles[-1]
         t = datetime.fromtimestamp(b["t"], TEHRAN)
-        send("✅ <b>ربات سیگنال طلا کار می‌کند</b>\n\n"
+        log(f"TEST: {len(candles)} closed candles from {src}; last {t:%m-%d %H:%M} Tehran close {info['close']:.2f} "
+            f"EMA20 {info['e20']:.2f} EMA50 {info['e50']:.2f} EMA200 {info['e200']:.2f} RSI {info['rsi']:.1f} "
+            f"ADX {info['adx']:.1f} ATR {info['atr']:.2f} signal {sig}")
+        ok1 = send("✅ <b>ربات سیگنال طلا کار می‌کند</b>\n\n"
              f"آخرین کندل بسته‌شده: {fa(t.strftime('%H:%M'))} تهران\n"
              f"قیمت: <code>{info['close']:.2f}</code>\n"
              f"EMA20 {info['e20']:.2f} | EMA50 {info['e50']:.2f} | EMA200 {info['e200']:.2f}\n"
@@ -355,7 +358,8 @@ def main():
              f"سیگنال الان: {'خرید' if sig == 1 else 'فروش' if sig == -1 else 'ندارد'}\n"
              f"📡 {src}\n\n"
              "نمونه‌ی پیام سیگنال:")
-        send(signal_message(sig or 1, b, info, src))
+        ok2 = send(signal_message(sig or 1, b, info, src))
+        log("TEST: telegram messages sent:", ok1, ok2)
         return
 
     if not state.get("welcome_sent"):
