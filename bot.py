@@ -543,6 +543,7 @@ LAST_WAS_GROUP = False
 # ---------------------------------------------------------------- share button
 # دکمه‌ی «ارسال برای دوستان» زیر هر پست: با یک لمس، پست برای دوست یا گروه فرستاده می‌شود
 SHARE_TEXT = "📢 ارسال برای دوستان"
+SHARE_BUTTON = False   # کاربر خواست دکمه زیر پست‌ها نباشد
 
 
 def share_markup(post_id=None) -> dict:
@@ -553,9 +554,28 @@ def share_markup(post_id=None) -> dict:
     return {"inline_keyboard": [[{"text": SHARE_TEXT, "url": share}]]}
 
 
+def remove_old_share_buttons(state):
+    """یک بار: دکمه‌ی «ارسال برای دوستان» را از پست‌هایی که قبلا گرفته بودند برمی‌دارد."""
+    if SHARE_BUTTON or state.get("share_buttons_removed"):
+        return
+    ids = [p["m"] for p in state.get("site_posts", [])]
+    if ids:
+        ids = list(range(545, max(ids) + 1))   # دکمه از پست ۵۴۵ اضافه شده بود
+    if state.get("price_pinned"):
+        ids.append(state["price_pinned"])
+    removed = 0
+    for mid in sorted(set(ids)):
+        if tg("editMessageReplyMarkup", {"chat_id": CHANNEL_ID, "message_id": mid,
+                                         "reply_markup": {"inline_keyboard": []}}):
+            removed += 1
+        time.sleep(1)
+    state["share_buttons_removed"] = True
+    print(f"share buttons removed from {removed} posts")
+
+
 def add_share_button(message_id):
     """دکمه بعد از ارسال اضافه می‌شود تا لینک همان پست را داشته باشد (آلبوم‌ها دکمه نمی‌گیرند)."""
-    if not MY_CHANNEL or not message_id:
+    if not SHARE_BUTTON or not MY_CHANNEL or not message_id:
         return
     tg("editMessageReplyMarkup", {"chat_id": CHANNEL_ID, "message_id": message_id,
                                    "reply_markup": share_markup(message_id)})
@@ -1004,7 +1024,7 @@ def simple_price_post(state, key) -> bool:
         return False
     msg = tg_call("sendMessage", {"chat_id": CHANNEL_ID, "text": price_text(esc(it["summary"]), key),
                                   "parse_mode": "HTML", "disable_web_page_preview": True,
-                                  "reply_markup": share_markup()})
+                                  **({"reply_markup": share_markup()} if SHARE_BUTTON else {})})
     if not msg:
         report_error("price", "ارسال پست قیمت دلار ناموفق بود.")
         return False
@@ -1438,10 +1458,12 @@ async def simple_main(sources, seen, first_run, state):
 
     async def digest_send(text):
         return tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML",
-                                  "disable_web_page_preview": True, "reply_markup": share_markup()})
+                                  "disable_web_page_preview": True,
+                                  **({"reply_markup": share_markup()} if SHARE_BUTTON else {})})
 
     if first_run:
         return mark_first_run(await collect(), seen)
+    remove_old_share_buttons(state)
     if SKIP_BACKLOG:
         skip_backlog(await collect(), seen, state)
     return await paced_loop(collect, publish_one, state, seen, price_post, digest_send)
