@@ -15,5 +15,6 @@
   {"name": "ZB_DR", "type": "telegram", "channel": "ZB_DR", "limit": 3, "tag": "😂 طنز"},
   {"name": "gizmiztel", "type": "telegram", "channel": "gizmiztel", "limit": 3, "tag": "🔥 داغ"},
   {"name": "YouQofli", "type": "telegram", "channel": "YouQofli", "limit": 3, "tag": "🎧 موسیقی"},
-  {"name": "efshagari", "type": "telegram", "channel": "efshagari", "limit": 3, "tag": "🔥 داغ"}
+  {"name": "efshagari", "type": "telegram", "channel": "efshagari", "limit": 3, "tag": "🔥 داغ"},
+  {"name": "kosshernews1", "type": "telegram", "channel": "kosshernews1", "limit": 3, "tag": "😂 طنز"}
 ]
