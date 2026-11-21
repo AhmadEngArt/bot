@@ -59,7 +59,7 @@ MY_CHANNEL = "@rooozane24"
 
 # امضای پایین هر پست: با لینک عضویت، تا هر کس پست فورواردشده را دید با یک لمس عضو شود
 SIGN_TEXT = "روزانه ۲۴"
-SIGN_SLOGAN = "خبر فوری، هر روز، هر ساعت"
+SIGN_SLOGAN = "خبر، حاشیه، خنده؛ هر روز"
 
 
 def signature() -> str:
@@ -315,6 +315,61 @@ ERRORS = {}
 
 FAIL_COUNTS = {}
 SOURCE_FAIL_ALERT = 10   # منبع فقط وقتی هشدار می‌دهد که چند بار پشت سر هم خطا بدهد (خطای لحظه‌ای نه)
+
+
+# ================================================================ CHANNEL PROFILE (یک‌بار)
+# عنوان، توضیح و پست خوش‌آمد سنجاق‌شده. با بالا بردن PROFILE_VERSION دوباره اعمال می‌شود.
+PROFILE_VERSION = 1
+CHANNEL_TITLE = "روزانه ۲۴ | داغ‌ترین‌های روز"
+CHANNEL_DESCRIPTION = (
+    "📡 روزانه ۲۴ | داغ‌ترین‌های روز\n"
+    "خبر داغ، حاشیه، طنز، ورزش و دلنوشته؛ هر روز، هر ساعت.\n"
+    "💵 قیمت دلار: ساعت ۹، ۱۲، ۱۷ و ۲۱\n"
+    "📋 مهم‌ترین‌های امروز: هر شب ساعت ۲۲"
+)
+WELCOME_TEXT = (
+    "👋 به «روزانه ۲۴» خوش اومدی!\n\n"
+    "هرچی امروز باید ببینی، یه‌جا:\n"
+    "🔥 خبرهای داغ ایران و جهان\n"
+    "👀 حاشیه | 😂 طنز | ⚽ ورزش\n"
+    "💰 اقتصاد | 🚗 خودرو | 💜 دلنوشته\n\n"
+    "🗓 <b>برنامه‌ی ثابت هر روز:</b>\n"
+    "☀️ ۷ صبح: صبح بخیر + یک جمله‌ی امید\n"
+    "💵 ۹، ۱۲، ۱۷ و ۲۱: قیمت دلار\n"
+    "📋 ۲۲ شب: مهم‌ترین‌های امروز\n\n"
+    "🔔 نوتیفیکیشن رو روشن نگه دار.\n"
+    "📨 کانال رو برای دوستات بفرست: t.me/rooozane24"
+)
+
+
+def apply_channel_profile(state):
+    """فقط یک بار برای هر PROFILE_VERSION اجرا می‌شود (حالت Bot API)."""
+    if not BOT_TOKEN or state.get("profile_version") == PROFILE_VERSION:
+        return
+    state["profile_version"] = PROFILE_VERSION
+    failed = []
+    if not tg("setChatDescription", {"chat_id": CHANNEL_ID, "description": CHANNEL_DESCRIPTION}):
+        failed.append("توضیح کانال")
+    res = tg_call("sendMessage", {"chat_id": CHANNEL_ID, "text": WELCOME_TEXT, "parse_mode": "HTML",
+                                  "disable_web_page_preview": True})
+    if res and res.get("message_id"):
+        mid = res["message_id"]
+        state["welcome_id"] = mid
+        if tg("pinChatMessage", {"chat_id": CHANNEL_ID, "message_id": mid, "disable_notification": True}):
+            tg("deleteMessage", {"chat_id": CHANNEL_ID, "message_id": mid + 1})   # پیام «سنجاق شد»
+        else:
+            failed.append("سنجاق پست خوش‌آمد")
+    else:
+        failed.append("ارسال پست خوش‌آمد")
+    if tg("setChatTitle", {"chat_id": CHANNEL_ID, "title": CHANNEL_TITLE}):
+        if state.get("welcome_id"):
+            tg("deleteMessage", {"chat_id": CHANNEL_ID, "message_id": state["welcome_id"] + 2})  # پیام «تغییر نام»
+    else:
+        failed.append("عنوان کانال")
+    if failed:
+        report_error("profile", "انجام نشد: " + "، ".join(failed) +
+                     ". ربات باید دسترسی Change Channel Info و Pin Messages داشته باشد.")
+    print(f"channel profile v{PROFILE_VERSION}: {'ok' if not failed else 'failed: ' + ', '.join(failed)}")
 
 
 def report_error(key: str, msg: str):
@@ -1810,6 +1865,11 @@ def main():
     if TEST_ALERT:
         report_error(f"test:{int(time.time())}", "تست: سیستم هشدار کار می‌کند ✅")
     print(f"Pacing: 1 post every {interval_min():g} min now, running {RUN_MINUTES:g} min")
+    try:
+        apply_channel_profile(state)
+        save_state(state, seen)
+    except Exception as ex:
+        print(f"channel profile failed: {ex!r}")
     try:
         if mtproto_enabled():
             print("Mode: full (MTProto)")
