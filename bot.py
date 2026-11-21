@@ -588,6 +588,7 @@ LAST_WAS_GROUP = False
 # دکمه‌ی «ارسال برای دوستان» زیر هر پست: با یک لمس، پست برای دوست یا گروه فرستاده می‌شود
 SHARE_TEXT = "📢 ارسال برای دوستان"
 SHARE_BUTTON = False   # کاربر خواست دکمه زیر پست‌ها نباشد
+AUTO_REACTION = os.environ.get("AUTO_REACTION", "🔥")   # ری‌اکشن خودکار ربات روی هر پست؛ خالی = خاموش
 
 
 def share_markup(post_id=None) -> dict:
@@ -615,6 +616,14 @@ def remove_old_share_buttons(state):
         time.sleep(1)
     state["share_buttons_removed"] = True
     print(f"share buttons removed from {removed} posts")
+
+
+def add_reaction(message_id):
+    """ربات یک ری‌اکشن (فقط از طرف خودش) روی پست تازه می‌گذارد؛ خطا فقط در لاگ می‌آید."""
+    if not AUTO_REACTION or not message_id or not BOT_TOKEN:
+        return
+    tg("setMessageReaction", {"chat_id": CHANNEL_ID, "message_id": message_id,
+                              "reaction": [{"type": "emoji", "emoji": AUTO_REACTION}]})
 
 
 def add_share_button(message_id):
@@ -1670,7 +1679,10 @@ async def mt_main(sources, seen, first_run, state):
         async def publish_one(it, src):
             global LAST_SENT_ID
             LAST_SENT_ID = None
-            return await mt_publish(client, target, it, src)
+            ok = await mt_publish(client, target, it, src)
+            if ok and LAST_SENT_ID:
+                add_reaction(LAST_SENT_ID)
+            return ok
 
         async def price_post(state, key):
             it = pick_price(await mt_fetch(client, {"channel": PRICE_CHANNEL, "limit": 20}))
@@ -1745,6 +1757,8 @@ async def simple_main(sources, seen, first_run, state):
         global LAST_SENT_ID
         LAST_SENT_ID = None
         ok = publish(it, src)
+        if ok and LAST_SENT_ID:
+            add_reaction(LAST_SENT_ID)
         if ok and LAST_SENT_ID and not LAST_WAS_GROUP:
             add_share_button(LAST_SENT_ID)
         return ok
