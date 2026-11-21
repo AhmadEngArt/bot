@@ -98,11 +98,16 @@ POST_INTERVAL_MIN = float(os.environ.get("POST_INTERVAL_MIN") or 4)
 # فاصله‌ی پست‌ها بر اساس ساعت (وقت تهران): (از ساعت, تا ساعت, دقیقه)
 # اگر متغیر POST_INTERVAL_MIN در گیتهاب تنظیم شده باشد، همان عدد ثابت برای همه‌ی ساعت‌ها استفاده می‌شود.
 POST_SCHEDULE = [
-    (0, 7, 12),     # نیمه‌شب تا ۷ صبح: آرام
-    (8, 10, 4),     # اوج صبح
-    (10, 18, 5),    # طول روز
-    (18, 24, 4),    # اوج شب
+    (0, 7, 45),     # نیمه‌شب تا ۷ صبح: خیلی آرام
+    (8, 10, 12),    # اوج صبح
+    (10, 18, 15),   # طول روز
+    (18, 24, 10),   # اوج شب
 ]
+# پست‌های عادی بی‌صدا ارسال می‌شوند (بدون زنگ نوتیفیکیشن برای اعضا).
+# صبح بخیر، قیمت دلار، خلاصه‌ی شبانه و پست خوش‌آمد با صدا می‌روند.
+SILENT_POSTS = True
+_SEND_METHODS = ("sendMessage", "sendPhoto", "sendVideo", "sendAnimation", "sendAudio", "sendVoice",
+                 "sendDocument", "sendMediaGroup", "sendSticker", "sendVideoNote")
 RUN_MINUTES = float(os.environ.get("RUN_MINUTES") or 50)   # هر اجرا چند دقیقه کار کند
 MAX_FILE_BYTES = 49 * 1024 * 1024
 CAPTION_LIMIT = 1024
@@ -358,6 +363,7 @@ def apply_channel_profile(state):
     if not tg("setChatDescription", {"chat_id": CHANNEL_ID, "description": CHANNEL_DESCRIPTION}):
         failed.append("توضیح کانال")
     res = tg_call("sendMessage", {"chat_id": CHANNEL_ID, "text": WELCOME_TEXT, "parse_mode": "HTML",
+                                  "disable_notification": False,
                                   "disable_web_page_preview": True})
     if res and res.get("message_id"):
         mid = res["message_id"]
@@ -699,6 +705,8 @@ def add_share_button(message_id):
 def tg_call(method: str, payload: dict, files=None):
     """درخواست به Bot API؛ در صورت موفقیت مقدار result و در غیر این صورت None برمی‌گرداند."""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+    if method in _SEND_METHODS and "disable_notification" not in payload:
+        payload = {**payload, "disable_notification": SILENT_POSTS}
     for attempt in range(4):
         try:
             if files:
@@ -949,7 +957,7 @@ async def mt_send_text(client, target, text, preview) -> bool:
     if not text.strip():
         return False
     try:
-        msg = await client.send_message(target, text, parse_mode="html", link_preview=preview)
+        msg = await client.send_message(target, text, parse_mode="html", link_preview=preview, silent=SILENT_POSTS)
         global LAST_SENT_ID
         LAST_SENT_ID = LAST_SENT_ID or getattr(msg, "id", None)
         return True
@@ -960,6 +968,7 @@ async def mt_send_text(client, target, text, preview) -> bool:
 
 async def mt_send_media(client, target, msgs, caption) -> bool:
     kw = {"caption": caption, "parse_mode": "html"} if caption else {}
+    kw["silent"] = SILENT_POSTS
     objs = [m.media for m in msgs]
     try:  # ارسال مستقیم با ارجاع به فایل؛ بدون دانلود و بدون محدودیت حجم
         sent = await client.send_file(target, objs if len(objs) > 1 else objs[0], **kw)
@@ -1142,7 +1151,8 @@ def simple_price_post(state, key) -> bool:
     if not it:
         report_error("price", f"پست قیمت ساعت {key.split(' ')[1]} ارسال نشد: قیمت تازه‌ای در @{PRICE_CHANNEL} پیدا نشد.")
         return False
-    msg = tg_call("sendMessage", {"chat_id": CHANNEL_ID, "text": price_text(esc(it["summary"]), key),
+    msg = tg_call("sendMessage", {"chat_id": CHANNEL_ID, "disable_notification": False,
+                                  "text": price_text(esc(it["summary"]), key),
                                   "parse_mode": "HTML", "disable_web_page_preview": True,
                                   **({"reply_markup": share_markup()} if SHARE_BUTTON else {})})
     if not msg:
@@ -1489,10 +1499,10 @@ async def run_morning_if_due(morning_send, state, seen):
 
 
 def simple_morning_send(sticker, text) -> bool:
-    if sticker and tg("sendSticker", {"chat_id": CHANNEL_ID, "emoji": "☀️"},
+    if sticker and tg("sendSticker", {"chat_id": CHANNEL_ID, "emoji": "☀️", "disable_notification": False},
                       files={"sticker": ("morning.webp", sticker, "image/webp")}):
         return True
-    return tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML",
+    return tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML", "disable_notification": False,
                               "disable_web_page_preview": True})
 
 
@@ -1862,7 +1872,7 @@ async def simple_main(sources, seen, first_run, state):
         return simple_price_post(state, key)
 
     async def digest_send(text):
-        return tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML",
+        return tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML", "disable_notification": False,
                                   "disable_web_page_preview": True,
                                   **({"reply_markup": share_markup()} if SHARE_BUTTON else {})})
 
