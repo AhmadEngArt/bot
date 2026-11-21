@@ -1885,27 +1885,29 @@ def ai_caption(text: str) -> str:
             "هشتگ و نقل‌قول نگذار. حداکثر یک ایموجی. فقط خود کپشن را بنویس.")},
         {"role": "user", "content": f"متن توییت:\n{text[:1200]}"},
     ]
-    for model in AI_MODELS:
-        try:
-            r = requests.post("https://models.github.ai/inference/chat/completions",
-                              headers={"Authorization": f"Bearer {GITHUB_TOKEN}", "Content-Type": "application/json",
-                                       "Accept": "application/json", "X-GitHub-Api-Version": "2022-11-28"},
-                              json={"model": model, "messages": msgs, "temperature": 0.8, "max_tokens": 200,
-                                    "stream": False},
-                              timeout=60)
+    endpoints = [("https://models.github.ai/inference/chat/completions", AI_MODELS),
+                 ("https://models.inference.ai.azure.com/chat/completions", ["gpt-4o-mini"])]
+    for url, models in endpoints:
+        for model in models:
             try:
-                data = r.json()
-            except ValueError:
-                print(f"ai caption {model}: {r.status_code} {r.headers.get('content-type')} {r.text[:300]!r}")
-                continue
-            if r.status_code == 200:
-                out = data["choices"][0]["message"]["content"].strip().strip('"«»')
-                out = re.sub(r"#\S+", "", out).strip()
-                if out:
-                    return out[:300]
-            print(f"ai caption {model}: {r.status_code} {r.text[:200]}")
-        except Exception as ex:
-            print(f"ai caption {model} failed: {ex!r}")
+                r = requests.post(url, headers={"Authorization": f"Bearer {GITHUB_TOKEN}",
+                                                "Content-Type": "application/json", "Accept": "application/json"},
+                                  json={"model": model, "messages": msgs, "temperature": 0.8, "max_tokens": 200},
+                                  timeout=60, allow_redirects=False)
+                try:
+                    data = r.json()
+                except ValueError:
+                    print(f"ai caption {model}: {r.status_code} {r.headers.get('content-type')} "
+                          f"loc={r.headers.get('location')} {r.text[:200]!r}")
+                    continue
+                if r.status_code == 200:
+                    out = data["choices"][0]["message"]["content"].strip().strip('"«»')
+                    out = re.sub(r"#\S+", "", out).strip()
+                    if out:
+                        return out[:300]
+                print(f"ai caption {model}: {r.status_code} {r.text[:200]}")
+            except Exception as ex:
+                print(f"ai caption {model} failed: {ex!r}")
     return ""
 
 
