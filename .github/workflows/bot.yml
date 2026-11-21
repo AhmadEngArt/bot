@@ -23,6 +23,7 @@ on:
 permissions:
   contents: write
   actions: write
+  models: read
 
 concurrency:
   group: news-bot
@@ -62,11 +63,8 @@ jobs:
           POST_INTERVAL_MIN: ${{ vars.POST_INTERVAL_MIN }}
           GOOGLE_SITE_VERIFICATION: ${{ vars.GOOGLE_SITE_VERIFICATION }}
           RUN_MINUTES: ${{ vars.RUN_MINUTES }}
-          X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
-          X_CT0: ${{ secrets.X_CT0 }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
-          TWEET_MIN_LIKES: ${{ vars.TWEET_MIN_LIKES }}
+          GITHUB_TOKEN: ${{ github.token }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
           TEST_TWEET: ${{ github.event.inputs.test_tweet == 'true' && 'true' || '' }}
         run: python -u bot.py
 

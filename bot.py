@@ -14,7 +14,7 @@ Changes in this version:
   * Source channel names (@username, t.me links) are replaced with YOUR channel
   * Website / RSS source links are kept
   * Ad posts are skipped (keyword filter)
-  * Top Persian tweets of the last 24h: screenshot + AI caption, 5 times a day
+  * Hot Persian tweets of the last 24h (from tweet-collector channels): image + AI caption, 5 times a day
 
 Env vars (GitHub Secrets):
   CHANNEL_ID  - e.g. @my_channel  (or -100123456789)
@@ -1640,26 +1640,21 @@ footer{{text-align:center;color:var(--sub);font-size:13px;padding:24px}}
 
 
 # ================================================================ TOP PERSIAN TWEETS
-# چند بار در روز (TWEET_TIMES به وقت تهران) پربازدیدترین توییت فارسی ۲۴ ساعت گذشته پیدا می‌شود،
-# از خودِ توییت (نسخه‌ی embed رسمی X) اسکرین‌شات گرفته می‌شود و با یک کپشن کوتاه در کانال می‌رود.
-#   جست‌وجو: کتابخانه‌ی twifork (نسخه‌ی سالم twikit) با کوکی یک حساب X  ← سکرت‌های X_AUTH_TOKEN و X_CT0
-#   کپشن:   Gemini (رایگان)                                              ← سکرت GEMINI_API_KEY (اختیاری)
-#   اسکرین‌شات: Playwright + Chromium (فقط سر ساعت نصب می‌شود)
-# اگر سکرت‌های X نباشند این بخش خاموش است و بقیه‌ی ربات عادی کار می‌کند.
-X_AUTH_TOKEN = os.environ.get("X_AUTH_TOKEN", "").strip()
-X_CT0 = os.environ.get("X_CT0", "").strip()
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "").strip()
-TEST_TWEET = os.environ.get("TEST_TWEET", "").strip().lower() == "true"
+# چند بار در روز (TWEET_TIMES به وقت تهران) پربازدیدترین توییت فارسی ۲۴ ساعت گذشته منتشر می‌شود.
+# بدون هیچ حساب و کلیدی:
+#   پیدا کردن: کانال‌های تلگرامی که توییت‌های پرطرفدار فارسی را جمع می‌کنند (TWEET_CHANNELS)؛
+#              پستی که نسبت به بقیه‌ی پست‌های همان کانال بیشتر دیده شده انتخاب می‌شود.
+#   تصویر:     اگر لینک توییت هست ← اسکرین‌شات از نسخه‌ی embed رسمی X (Playwright)؛
+#              اگر پست عکس دارد ← همان عکس؛ وگرنه ← کارت توییت با فونت فارسی (Pillow).
+#   کپشن:      GitHub Models با توکن خودکار گیتهاب (رایگان)؛ اگر نشد، کپشن ساده.
+TWEET_CHANNELS = ["ParsTwt", "TweetFrsi"]
 TWEET_TIMES = ["10:00", "14:00", "18:00", "20:00", "23:00"]   # به وقت تهران
 TWEET_LATE_MIN = 90
-TWEET_MIN_LIKES = int(os.environ.get("TWEET_MIN_LIKES") or 300)
-TWEET_TAG = "🐦 توییتر"
-TWIFORK_PIP = "twikit @ git+https://github.com/PawiX25/twifork.git"
-
-
-def tweets_enabled() -> bool:
-    return bool(X_AUTH_TOKEN and X_CT0)
+TWEET_TAG = "🐦 توییت داغ امروز"
+TEST_TWEET = os.environ.get("TEST_TWEET", "").strip().lower() == "true"
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
+AI_MODELS = [m for m in (os.environ.get("AI_MODEL", "").strip(), "openai/gpt-4.1-mini", "openai/gpt-4o-mini") if m]
+TWEET_LINK = re.compile(r"https?://(?:www\.|mobile\.)?(?:x|twitter)\.com/(\w+)/status(?:es)?/(\d+)")
 
 
 def due_tweet_slot(state):
@@ -1674,77 +1669,89 @@ def due_tweet_slot(state):
     return None
 
 
-def _pip(*args) -> bool:
-    import subprocess
-    r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", *args], capture_output=True, text=True)
-    if r.returncode:
-        print(f"pip install {args} failed: {r.stderr[-400:]}")
-    return r.returncode == 0
-
-
-def fa_count(n) -> str:
-    """۱۲۳۴۵۶۷ ← «۱٫۲ میلیون»، ۲۳۴۰۰ ← «۲۳ هزار»."""
+def parse_views(s: str) -> int:
+    """«12.3K» ← ۱۲۳۰۰"""
+    m = re.match(r"([\d.]+)\s*([KM]?)", (s or "").strip().upper())
+    if not m:
+        return 0
     try:
-        n = int(n or 0)
-    except (TypeError, ValueError):
-        return ""
-    if n >= 1_000_000:
-        s = f"{n / 1_000_000:.1f}".rstrip("0").rstrip(".") + " میلیون"
-    elif n >= 1000:
-        s = f"{n / 1000:.0f} هزار" if n >= 10_000 else f"{n / 1000:.1f}".rstrip("0").rstrip(".") + " هزار"
-    else:
-        s = str(n)
-    return s.replace(".", "٫").translate(FA_DIGITS)
-
-
-def _num(v) -> int:
-    try:
-        return int(str(v or 0).replace(",", ""))
+        return int(float(m.group(1)) * {"": 1, "K": 1000, "M": 1_000_000}[m.group(2)])
     except ValueError:
         return 0
 
 
-async def fetch_top_tweets():
-    """توییت‌های فارسی پرطرفدار ۲۴ ساعت گذشته، مرتب‌شده بر اساس بازدید."""
-    try:
-        from twikit import Client
-    except ImportError:
-        if not _pip(TWIFORK_PIP):
-            raise RuntimeError("نصب twifork ناموفق بود")
-        from twikit import Client
-    from datetime import timezone, timedelta
-    client = Client("en-US")
-    client.set_cookies({"auth_token": X_AUTH_TOKEN, "ct0": X_CT0})
-    since = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
-    query = f"lang:fa min_faves:{TWEET_MIN_LIKES} -filter:replies -filter:nativeretweets since:{since}"
-    page = await client.search_tweet(query, "Top", count=20)
-    tweets = list(page)
-    try:
-        tweets += list(await page.next())
-    except Exception as ex:
-        print(f"tweets: second page failed: {ex!r}")
+EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF☀-➿️‍⬀-⯿⌀-⏿]")
+
+
+def fetch_tweet_posts(channel: str, pages: int = 2):
+    """پست‌های ۲۴ ساعت اخیر یک کانال توییت، با تعداد بازدید تلگرام."""
+    out, before, names = [], None, set()
     cutoff = time.time() - 24 * 3600
-    out = []
-    for t in tweets:
-        dt = getattr(t, "created_at_datetime", None)
-        ts = dt.timestamp() if dt else 0
-        user = getattr(t, "user", None)
-        text = getattr(t, "full_text", None) or getattr(t, "text", "") or ""
-        if ts and ts < cutoff:
-            continue
-        if getattr(t, "possibly_sensitive", False) or is_ad(text):
-            continue
-        if re.search(r"(?i)\bvpn\b|وی ?پی ?ان|فیلترشکن", text):
-            continue
-        out.append({
-            "id": str(t.id), "text": text, "ts": ts,
-            "name": getattr(user, "name", "") or "", "handle": getattr(user, "screen_name", "") or "",
-            "views": _num(getattr(t, "view_count", 0)), "likes": _num(getattr(t, "favorite_count", 0)),
-            "retweets": _num(getattr(t, "retweet_count", 0)),
-        })
-    out.sort(key=lambda x: (x["views"] or x["likes"] * 50), reverse=True)
-    print(f"tweets: {len(tweets)} found, {len(out)} usable")
+    for _ in range(pages):
+        url = f"https://t.me/s/{channel}" + (f"?before={before}" if before else "")
+        r = requests.get(url, headers=UA, timeout=TIMEOUT)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        if not names:
+            title_el = soup.select_one(".tgme_channel_info_header_title")
+            names = source_names(title_el.get_text(" ", strip=True) if title_el else "")
+        ids = []
+        for msg in soup.select(".tgme_widget_message_wrap"):
+            bubble = msg.select_one(".tgme_widget_message")
+            post = bubble.get("data-post") if bubble else None
+            if not post:
+                continue
+            ids.append(int(post.split("/")[-1]))
+            if bubble.select_one(".tgme_widget_message_forwarded_from"):
+                continue                                  # فوروارد (معمولا تبلیغ کانال دیگر)
+            if msg.select_one("a.tgme_widget_message_video_player, audio, .tgme_widget_message_document"):
+                continue
+            text_el = msg.select_one(".tgme_widget_message_text")
+            raw = text_el.get_text("\n", strip=True) if text_el else ""
+            hrefs = " ".join(a.get("href", "") for a in msg.select("a[href]"))
+            link = TWEET_LINK.search(f"{raw} {hrefs}")
+            if is_ad(raw) or re.search(r"(?i)\bvpn\b|وی ?پی ?ان|فیلترشکن|استارلینک", raw):
+                continue
+            text = strip_source_names(replace_channels(raw), names)
+            text = TWEET_LINK.sub("", text)
+            text = re.sub(r"https?://\S+", "", text).strip()
+            try:
+                ts = datetime.fromisoformat(msg.select_one(".tgme_widget_message_date time")["datetime"]).timestamp()
+            except Exception:
+                ts = 0
+            photos = extract_media(msg)
+            if ts < cutoff or (len(text) < 15 and not photos and not link):
+                continue
+            if len(text) > 600:                           # توییت نیست، متن بلند است
+                continue
+            v = msg.select_one(".tgme_widget_message_views")
+            out.append({"id": item_id(post), "link": f"https://t.me/{post}", "channel": channel, "text": text,
+                        "ts": ts, "views": parse_views(v.get_text() if v else ""),
+                        "photo": photos[0]["url"] if photos and photos[0]["type"] == "photo" else None,
+                        "tweet": (link.group(1), link.group(2)) if link else None})
+        if not ids or min(ids) <= 1:
+            break
+        before = min(ids)
     return out
+
+
+def pick_top_tweet(posts, state):
+    """پستی که نسبت به میانه‌ی بازدیدِ کانال خودش بیشتر دیده شده (تا کانال بزرگ‌تر همیشه نبرد)."""
+    import statistics
+    done = set(state.get("tweet_posted", []))
+    by_ch = {}
+    for p in posts:
+        by_ch.setdefault(p["channel"], []).append(p["views"])
+    scored = []
+    for p in posts:
+        if p["id"] in done or not p["views"]:
+            continue
+        if p["text"] and find_duplicate(fingerprint(p["text"]), state):
+            continue
+        med = statistics.median(by_ch[p["channel"]]) or 1
+        scored.append((p["views"] / med, p))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [p for _, p in scored]
 
 
 def _ensure_playwright() -> bool:
@@ -1752,37 +1759,36 @@ def _ensure_playwright() -> bool:
     try:
         import playwright  # noqa: F401
     except ImportError:
-        if not _pip("playwright"):
+        r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "playwright"], capture_output=True, text=True)
+        if r.returncode:
+            print(f"pip install playwright failed: {r.stderr[-300:]}")
             return False
-    # فونت فارسی برای متن توییت در اسکرین‌شات
-    fdir = Path.home() / ".fonts"
+    fdir = Path.home() / ".fonts"                          # فونت فارسی برای متن توییت
     fdir.mkdir(exist_ok=True)
     for f in FONTS_DIR.glob("*.ttf"):
         shutil.copy(f, fdir / f.name)
     r = subprocess.run([sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
                        capture_output=True, text=True)
     if r.returncode:
-        print(f"playwright install failed: {r.stderr[-400:]}")
+        print(f"playwright install failed: {r.stderr[-300:]}")
         return False
     subprocess.run(["fc-cache", "-f"], capture_output=True)
     return True
 
 
 async def screenshot_tweet(tweet_id: str):
-    """اسکرین‌شات PNG از نسخه‌ی embed رسمی توییت؛ اگر نشد None."""
+    """اسکرین‌شات PNG از نسخه‌ی embed رسمی توییت (بدون نیاز به ورود)؛ اگر نشد None."""
     if not _ensure_playwright():
         return None
     from playwright.async_api import async_playwright
-    url = (f"https://platform.twitter.com/embed/Tweet.html?id={tweet_id}"
-           "&theme=light&lang=fa&dnt=true&hideThread=true&hideCard=false")
+    url = f"https://platform.twitter.com/embed/Tweet.html?id={tweet_id}&theme=light&lang=fa&dnt=true&hideThread=true"
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch()
-            page = await browser.new_page(viewport={"width": 550, "height": 1400}, device_scale_factor=2,
-                                          locale="fa-IR")
+            page = await browser.new_page(viewport={"width": 550, "height": 1400}, device_scale_factor=2)
             await page.goto(url, wait_until="networkidle", timeout=60000)
             art = await page.wait_for_selector("article", timeout=30000)
-            await page.wait_for_timeout(2500)          # عکس‌ها و آواتار کامل بارگذاری شوند
+            await page.wait_for_timeout(2500)
             png = await art.screenshot(type="png")
             await browser.close()
             return png
@@ -1791,73 +1797,135 @@ async def screenshot_tweet(tweet_id: str):
         return None
 
 
-def ai_caption(tw) -> str:
-    """یک جمله‌ی کوتاه فارسی درباره‌ی توییت (Gemini). اگر کلید نبود یا خطا داد، رشته‌ی خالی."""
-    if not GEMINI_API_KEY:
+def make_tweet_card(text: str):
+    """کارت توییت (PNG) با متن فارسی و رنگ‌های روزانه ۲۴. اگر نشد None."""
+    try:
+        import io
+        from PIL import Image, ImageDraw, ImageFont, features
+        if not features.check("raqm"):
+            print("tweet card: raqm not available")
+            return None
+        text = re.sub(r"[ \t]+", " ", EMOJI_RE.sub("", text)).strip()
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        if not text:
+            return None
+        W, pad, cpad = 1080, 56, 64
+        navy, yellow, white, ink, grey = (10, 26, 63), (255, 212, 0), (255, 255, 255), (15, 20, 25), (110, 118, 125)
+        size = 50 if len(text) < 140 else 44 if len(text) < 280 else 38
+        body = ImageFont.truetype(str(FONTS_DIR / "Vazirmatn.ttf"), size)
+        try:
+            body.set_variation_by_name("Medium")
+        except Exception:
+            pass
+        head = ImageFont.truetype(str(FONTS_DIR / "Lalezar-Regular.ttf"), 54)
+        small = ImageFont.truetype(str(FONTS_DIR / "Vazirmatn.ttf"), 30)
+        meas = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+        maxw = W - 2 * pad - 2 * cpad
+
+        def width(s, f):
+            return meas.textlength(s, font=f, direction="rtl", language="fa")
+
+        lines = []
+        for para in text.split("\n"):
+            cur = ""
+            for word in para.split(" "):
+                trial = f"{cur} {word}".strip()
+                if cur and width(trial, body) > maxw:
+                    lines.append(cur)
+                    cur = word
+                else:
+                    cur = trial
+            lines.append(cur)
+        lh = int(size * 1.75)
+        header_h, footer_h = 150, 110
+        card_h = header_h + len(lines) * lh + 70
+        H = pad + card_h + footer_h + 20
+        img = Image.new("RGB", (W, H), navy)
+        d = ImageDraw.Draw(img)
+        x0, y0, x1, y1 = pad, pad, W - pad, pad + card_h
+        d.rounded_rectangle((x0, y0, x1, y1), radius=36, fill=white)
+        # سربرگ: دایره‌ی زرد با پرنده‌ی ساده + عنوان
+        cx, cy, r = x1 - cpad - 40, y0 + 80, 40
+        d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=yellow)
+        d.text((cx, cy + 2), "۲۴", font=ImageFont.truetype(str(FONTS_DIR / "Lalezar-Regular.ttf"), 44),
+               fill=navy, anchor="mm", direction="rtl", language="fa")
+        d.text((cx - r - 24, cy - 14), "توییت داغ امروز", font=head, fill=ink, anchor="rm",
+               direction="rtl", language="fa")
+        d.text((cx - r - 24, cy + 34), "از توییتر فارسی", font=small, fill=grey, anchor="rm",
+               direction="rtl", language="fa")
+        d.line((x0 + cpad, y0 + header_h - 10, x1 - cpad, y0 + header_h - 10), fill=(230, 233, 236), width=3)
+        y = y0 + header_h + 20
+        for ln in lines:
+            if ln:
+                d.text((x1 - cpad, y), ln, font=body, fill=ink, anchor="ra", direction="rtl", language="fa")
+            y += lh
+        # پانویس: نام کانال
+        fy = y1 + footer_h // 2 + 10
+        ff = ImageFont.truetype(str(FONTS_DIR / "Vazirmatn.ttf"), 36)
+        d.text((W // 2 + 20, fy), "روزانه ۲۴", font=ff, fill=yellow, anchor="lm", direction="rtl", language="fa")
+        d.text((W // 2, fy), "|", font=ff, fill=yellow, anchor="mm")
+        d.text((W // 2 - 20, fy), MY_CHANNEL, font=ff, fill=yellow, anchor="rm", direction="ltr")
+        buf = io.BytesIO()
+        img.save(buf, "PNG", optimize=True)
+        return buf.getvalue()
+    except Exception as ex:
+        print(f"tweet card failed: {ex!r}")
+        return None
+
+
+def ai_caption(text: str) -> str:
+    """یک جمله‌ی کوتاه فارسی درباره‌ی توییت با GitHub Models (توکن خودکار اکشن). اگر نشد، رشته‌ی خالی."""
+    if not GITHUB_TOKEN or not text:
         return ""
-    prompt = (
-        "برای کانال تلگرامی خبری «روزانه ۲۴» یک کپشن کوتاه فارسی (حداکثر ۲ جمله، زیر ۲۰۰ کاراکتر) "
-        "برای اسکرین‌شات این توییت پربازدید بنویس. لحن خودمانی ولی محترمانه. فقط بگو توییت درباره‌ی چیست "
-        "یا چرا دیده شده؛ چیزی از خودت به آن اضافه نکن، نظر سیاسی نده، کسی را مسخره نکن، هشتگ و ایموجی نگذار "
-        "و متن توییت را تکرار نکن. فقط خود کپشن را بنویس.\n\n"
-        f"نویسنده: {tw['name']} (@{tw['handle']})\nمتن توییت:\n{tw['text'][:1500]}"
-    )
-    base = "https://generativelanguage.googleapis.com/v1beta"
-    models = [m for m in (GEMINI_MODEL, "gemini-flash-latest", "gemini-flash-lite-latest") if m]
-    tried = set()
-    for attempt in range(2):
-        for model in models:
-            if model in tried:
-                continue
-            tried.add(model)
-            try:
-                r = requests.post(f"{base}/models/{model}:generateContent", params={"key": GEMINI_API_KEY},
-                                  json={"contents": [{"parts": [{"text": prompt}]}],
-                                        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 400}},
-                                  timeout=60)
-                if r.status_code == 200:
-                    parts = r.json()["candidates"][0]["content"]["parts"]
-                    text = " ".join(p.get("text", "") for p in parts).strip().strip('"«»')
-                    text = re.sub(r"#\S+", "", text).strip()
-                    if text:
-                        return text[:300]
-                print(f"gemini {model}: {r.status_code} {r.text[:200]}")
-            except Exception as ex:
-                print(f"gemini {model} failed: {ex!r}")
-        if attempt == 0:          # اسم مدل‌ها عوض می‌شود: یک مدل Flash موجود را از فهرست پیدا کن
-            try:
-                r = requests.get(f"{base}/models", params={"key": GEMINI_API_KEY}, timeout=30)
-                names = [m["name"].split("/", 1)[1] for m in r.json().get("models", [])
-                         if "generateContent" in m.get("supportedGenerationMethods", [])
-                         and "flash" in m["name"] and not re.search(r"image|tts|audio|live|preview|exp", m["name"])]
-                models = sorted(names, reverse=True)[:3]
-            except Exception as ex:
-                print(f"gemini list models failed: {ex!r}")
-                break
+    msgs = [
+        {"role": "system", "content": (
+            "تو ادمین کانال تلگرامی «روزانه ۲۴» هستی. برای عکسِ یک توییت پربازدید فارسی یک کپشن کوتاه فارسی "
+            "بنویس: حداکثر یک یا دو جمله‌ی کوتاه (زیر ۱۵۰ کاراکتر)، خودمانی و بامزه ولی محترمانه. "
+            "متن توییت را تکرار نکن، چیزی از خودت به ماجرا اضافه نکن، نظر سیاسی نده، کسی را مسخره یا تحقیر نکن، "
+            "هشتگ و نقل‌قول نگذار. حداکثر یک ایموجی. فقط خود کپشن را بنویس.")},
+        {"role": "user", "content": f"متن توییت:\n{text[:1200]}"},
+    ]
+    for model in AI_MODELS:
+        try:
+            r = requests.post("https://models.github.ai/inference/chat/completions",
+                              headers={"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"},
+                              json={"model": model, "messages": msgs, "temperature": 0.8, "max_tokens": 200},
+                              timeout=60)
+            if r.status_code == 200:
+                out = r.json()["choices"][0]["message"]["content"].strip().strip('"«»')
+                out = re.sub(r"#\S+", "", out).strip()
+                if out:
+                    return out[:300]
+            print(f"ai caption {model}: {r.status_code} {r.text[:200]}")
+        except Exception as ex:
+            print(f"ai caption {model} failed: {ex!r}")
     return ""
 
 
-def tweet_caption(tw, ai_text: str) -> str:
-    link = f"https://x.com/{tw['handle']}/status/{tw['id']}"
-    stats = []
-    if tw["views"]:
-        stats.append(f"👁 {fa_count(tw['views'])} بازدید")
-    if tw["likes"]:
-        stats.append(f"❤️ {fa_count(tw['likes'])}")
-    if tw["retweets"]:
-        stats.append(f"🔁 {fa_count(tw['retweets'])}")
+def tweet_caption(p, ai_text: str) -> str:
     parts = [f"<b>{TWEET_TAG}</b>"]
     if ai_text:
         parts.append(esc(ai_text))
-    parts.append(f'👤 {esc(tw["name"])} (<a href="{link}">@{esc(tw["handle"])}</a>)'
-                 + (f"\n{' · '.join(stats)}" if stats else ""))
+    if p.get("tweet"):
+        handle, tid = p["tweet"]
+        parts.append(f'👤 <a href="https://x.com/{handle}/status/{tid}">@{esc(handle)}</a>')
     parts.append(signature())
-    return "\n\n".join(p for p in parts if p)[:CAPTION_LIMIT]
+    return "\n\n".join(parts)[:CAPTION_LIMIT]
+
+
+async def tweet_image(p):
+    if p.get("tweet"):
+        png = await screenshot_tweet(p["tweet"][1])
+        if png:
+            return png
+    if p.get("photo"):
+        blob = download(p["photo"])
+        if blob:
+            return blob
+    return make_tweet_card(p["text"]) if p["text"] else None
 
 
 async def run_tweet_if_due(photo_send, state, seen, force=False):
-    if not tweets_enabled():
-        return
     key = due_tweet_slot(state) or (f"test {int(time.time())}" if force else None)
     if not key:
         return
@@ -1867,26 +1935,30 @@ async def run_tweet_if_due(photo_send, state, seen, force=False):
     save_state(state, seen)
     ok = False
     try:
-        posted = state.get("tweet_posted", [])
-        found = [t for t in await fetch_top_tweets() if t["id"] not in posted]
-        if not found:
-            print("tweets: nothing new")
-            return
-        for tw in found[:3]:                              # اگر اسکرین‌شات یکی نشد، بعدی
-            png = await screenshot_tweet(tw["id"])
-            if not png:
+        posts = []
+        for ch in TWEET_CHANNELS:
+            try:
+                got = fetch_tweet_posts(ch)
+                print(f"tweets [{ch}]: {len(got)} posts in 24h")
+                posts += got
+                source_ok(f"tw:{ch}")
+            except Exception as ex:
+                print(f"tweets [{ch}] failed: {ex!r}")
+                source_failed(f"tw:{ch}", f"کانال توییت {ch} خوانده نشد: {type(ex).__name__}")
+        for p in pick_top_tweet(posts, state)[:3]:       # اگر تصویر یکی نشد، بعدی
+            img = await tweet_image(p)
+            if not img:
                 continue
-            ok = await photo_send(png, tweet_caption(tw, ai_caption(tw)))
+            ok = await photo_send(img, tweet_caption(p, ai_caption(p["text"])))
             if ok:
-                state["tweet_posted"] = (posted + [tw["id"]])[-300:]
+                state["tweet_posted"] = (state.get("tweet_posted", []) + [p["id"]])[-300:]
+                if p["text"]:
+                    remember(fingerprint(p["text"]), p["link"], state, key=p["id"])
                 state["last_post"] = time.time()
-                print(f"tweet posted: {tw['id']} ({tw['views']} views)")
+                print(f"tweet posted: {p['link']} ({p['views']} views)")
             break
     except Exception as ex:
-        msg = str(ex)[:150]
-        hint = " (احتمالا کوکی X منقضی شده؛ X_AUTH_TOKEN و X_CT0 را تازه کن)" if re.search(
-            r"401|403|Unauthorized|Forbidden|auth", msg, re.I) else ""
-        report_error("tweets", f"توییت پربازدید ارسال نشد: {type(ex).__name__}: {msg}{hint}")
+        report_error("tweets", f"توییت داغ ارسال نشد: {type(ex).__name__}: {str(ex)[:150]}")
         print(f"tweet slot failed: {ex!r}")
     finally:
         save_state(state, seen)
@@ -1894,9 +1966,9 @@ async def run_tweet_if_due(photo_send, state, seen, force=False):
         print(f"tweet slot {key}: not posted")
 
 
-def simple_photo_send(png, caption) -> bool:
+def simple_photo_send(img, caption) -> bool:
     return tg("sendPhoto", {"chat_id": CHANNEL_ID, "caption": caption, "parse_mode": "HTML"},
-              files={"photo": ("tweet.png", png, "image/png")})
+              files={"photo": ("tweet.png", img)})
 
 
 # ================================================================ PACED LOOP
