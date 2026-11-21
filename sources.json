@@ -8,7 +8,6 @@
   {"name": "hashieh", "type": "telegram", "channel": "hashieh", "limit": 3, "tag": "👀 حاشیه"},
   {"name": "pe_az", "type": "telegram", "channel": "pe_az", "limit": 3, "tag": "💰 اقتصاد"},
   {"name": "DEL_ANGIZ_JAN", "type": "telegram", "channel": "DEL_ANGIZ_JAN", "limit": 3, "tag": "💜 دلنوشته"},
-  {"name": "Hesse_Arammesh", "type": "telegram", "channel": "Hesse_Arammesh", "limit": 3, "tag": "💜 دلنوشته"},
   {"name": "ZB_DR", "type": "telegram", "channel": "ZB_DR", "limit": 3, "tag": "😂 طنز"},
   {"name": "gizmiztel", "type": "telegram", "channel": "gizmiztel", "limit": 3, "tag": "🔥 داغ"},
   {"name": "efshagari", "type": "telegram", "channel": "efshagari", "limit": 3, "tag": "🔥 داغ"},
