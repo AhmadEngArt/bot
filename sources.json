@@ -16,5 +16,6 @@
   {"name": "efshagari", "type": "telegram", "channel": "efshagari", "limit": 3, "tag": "🔥 داغ"},
   {"name": "kosshernews1", "type": "telegram", "channel": "kosshernews1", "limit": 3, "tag": "😂 طنز"},
   {"name": "rapkiingnews", "type": "telegram", "channel": "rapkiingnews", "limit": 3, "tag": "👀 حاشیه"},
-  {"name": "kaliiyou", "type": "telegram", "channel": "kaliiyou", "limit": 3, "tag": "💜 دلنوشته"}
+  {"name": "kaliiyou", "type": "telegram", "channel": "kaliiyou", "limit": 3, "tag": "💜 دلنوشته"},
+  {"name": "ARAMESH_KADDE", "type": "telegram", "channel": "ARAMESH_KADDE", "limit": 3, "tag": "💜 دلنوشته"}
 ]
