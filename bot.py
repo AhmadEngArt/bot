@@ -14,6 +14,7 @@ Changes in this version:
   * Source channel names (@username, t.me links) are replaced with YOUR channel
   * Website / RSS source links are kept
   * Ad posts are skipped (keyword filter)
+  * Top Persian tweets of the last 24h: screenshot + AI caption, 5 times a day
 
 Env vars (GitHub Secrets):
   CHANNEL_ID  - e.g. @my_channel  (or -100123456789)
@@ -1627,6 +1628,266 @@ footer{{text-align:center;color:var(--sub);font-size:13px;padding:24px}}
 """
 
 
+# ================================================================ TOP PERSIAN TWEETS
+# چند بار در روز (TWEET_TIMES به وقت تهران) پربازدیدترین توییت فارسی ۲۴ ساعت گذشته پیدا می‌شود،
+# از خودِ توییت (نسخه‌ی embed رسمی X) اسکرین‌شات گرفته می‌شود و با یک کپشن کوتاه در کانال می‌رود.
+#   جست‌وجو: کتابخانه‌ی twifork (نسخه‌ی سالم twikit) با کوکی یک حساب X  ← سکرت‌های X_AUTH_TOKEN و X_CT0
+#   کپشن:   Gemini (رایگان)                                              ← سکرت GEMINI_API_KEY (اختیاری)
+#   اسکرین‌شات: Playwright + Chromium (فقط سر ساعت نصب می‌شود)
+# اگر سکرت‌های X نباشند این بخش خاموش است و بقیه‌ی ربات عادی کار می‌کند.
+X_AUTH_TOKEN = os.environ.get("X_AUTH_TOKEN", "").strip()
+X_CT0 = os.environ.get("X_CT0", "").strip()
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "").strip()
+TEST_TWEET = os.environ.get("TEST_TWEET", "").strip().lower() == "true"
+TWEET_TIMES = ["10:00", "14:00", "18:00", "20:00", "23:00"]   # به وقت تهران
+TWEET_LATE_MIN = 90
+TWEET_MIN_LIKES = int(os.environ.get("TWEET_MIN_LIKES") or 300)
+TWEET_TAG = "🐦 توییتر"
+TWIFORK_PIP = "twikit @ git+https://github.com/PawiX25/twifork.git"
+
+
+def tweets_enabled() -> bool:
+    return bool(X_AUTH_TOKEN and X_CT0)
+
+
+def due_tweet_slot(state):
+    now = datetime.now(TEHRAN)
+    done = state.get("tweet_done", [])
+    for hhmm in TWEET_TIMES:
+        slot = _today_at(hhmm, now)
+        key = slot.strftime("%Y-%m-%d ") + hhmm
+        late = (now - slot).total_seconds() / 60
+        if key not in done and 0 <= late <= TWEET_LATE_MIN:
+            return key
+    return None
+
+
+def _pip(*args) -> bool:
+    import subprocess
+    r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", *args], capture_output=True, text=True)
+    if r.returncode:
+        print(f"pip install {args} failed: {r.stderr[-400:]}")
+    return r.returncode == 0
+
+
+def fa_count(n) -> str:
+    """۱۲۳۴۵۶۷ ← «۱٫۲ میلیون»، ۲۳۴۰۰ ← «۲۳ هزار»."""
+    try:
+        n = int(n or 0)
+    except (TypeError, ValueError):
+        return ""
+    if n >= 1_000_000:
+        s = f"{n / 1_000_000:.1f}".rstrip("0").rstrip(".") + " میلیون"
+    elif n >= 1000:
+        s = f"{n / 1000:.0f} هزار" if n >= 10_000 else f"{n / 1000:.1f}".rstrip("0").rstrip(".") + " هزار"
+    else:
+        s = str(n)
+    return s.replace(".", "٫").translate(FA_DIGITS)
+
+
+def _num(v) -> int:
+    try:
+        return int(str(v or 0).replace(",", ""))
+    except ValueError:
+        return 0
+
+
+async def fetch_top_tweets():
+    """توییت‌های فارسی پرطرفدار ۲۴ ساعت گذشته، مرتب‌شده بر اساس بازدید."""
+    try:
+        from twikit import Client
+    except ImportError:
+        if not _pip(TWIFORK_PIP):
+            raise RuntimeError("نصب twifork ناموفق بود")
+        from twikit import Client
+    from datetime import timezone, timedelta
+    client = Client("en-US")
+    client.set_cookies({"auth_token": X_AUTH_TOKEN, "ct0": X_CT0})
+    since = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    query = f"lang:fa min_faves:{TWEET_MIN_LIKES} -filter:replies -filter:nativeretweets since:{since}"
+    page = await client.search_tweet(query, "Top", count=20)
+    tweets = list(page)
+    try:
+        tweets += list(await page.next())
+    except Exception as ex:
+        print(f"tweets: second page failed: {ex!r}")
+    cutoff = time.time() - 24 * 3600
+    out = []
+    for t in tweets:
+        dt = getattr(t, "created_at_datetime", None)
+        ts = dt.timestamp() if dt else 0
+        user = getattr(t, "user", None)
+        text = getattr(t, "full_text", None) or getattr(t, "text", "") or ""
+        if ts and ts < cutoff:
+            continue
+        if getattr(t, "possibly_sensitive", False) or is_ad(text):
+            continue
+        if re.search(r"(?i)\bvpn\b|وی ?پی ?ان|فیلترشکن", text):
+            continue
+        out.append({
+            "id": str(t.id), "text": text, "ts": ts,
+            "name": getattr(user, "name", "") or "", "handle": getattr(user, "screen_name", "") or "",
+            "views": _num(getattr(t, "view_count", 0)), "likes": _num(getattr(t, "favorite_count", 0)),
+            "retweets": _num(getattr(t, "retweet_count", 0)),
+        })
+    out.sort(key=lambda x: (x["views"] or x["likes"] * 50), reverse=True)
+    print(f"tweets: {len(tweets)} found, {len(out)} usable")
+    return out
+
+
+def _ensure_playwright() -> bool:
+    import subprocess
+    try:
+        import playwright  # noqa: F401
+    except ImportError:
+        if not _pip("playwright"):
+            return False
+    # فونت فارسی برای متن توییت در اسکرین‌شات
+    fdir = Path.home() / ".fonts"
+    fdir.mkdir(exist_ok=True)
+    for f in FONTS_DIR.glob("*.ttf"):
+        shutil.copy(f, fdir / f.name)
+    r = subprocess.run([sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
+                       capture_output=True, text=True)
+    if r.returncode:
+        print(f"playwright install failed: {r.stderr[-400:]}")
+        return False
+    subprocess.run(["fc-cache", "-f"], capture_output=True)
+    return True
+
+
+async def screenshot_tweet(tweet_id: str):
+    """اسکرین‌شات PNG از نسخه‌ی embed رسمی توییت؛ اگر نشد None."""
+    if not _ensure_playwright():
+        return None
+    from playwright.async_api import async_playwright
+    url = (f"https://platform.twitter.com/embed/Tweet.html?id={tweet_id}"
+           "&theme=light&lang=fa&dnt=true&hideThread=true&hideCard=false")
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch()
+            page = await browser.new_page(viewport={"width": 550, "height": 1400}, device_scale_factor=2,
+                                          locale="fa-IR")
+            await page.goto(url, wait_until="networkidle", timeout=60000)
+            art = await page.wait_for_selector("article", timeout=30000)
+            await page.wait_for_timeout(2500)          # عکس‌ها و آواتار کامل بارگذاری شوند
+            png = await art.screenshot(type="png")
+            await browser.close()
+            return png
+    except Exception as ex:
+        print(f"tweet screenshot failed: {ex!r}")
+        return None
+
+
+def ai_caption(tw) -> str:
+    """یک جمله‌ی کوتاه فارسی درباره‌ی توییت (Gemini). اگر کلید نبود یا خطا داد، رشته‌ی خالی."""
+    if not GEMINI_API_KEY:
+        return ""
+    prompt = (
+        "برای کانال تلگرامی خبری «روزانه ۲۴» یک کپشن کوتاه فارسی (حداکثر ۲ جمله، زیر ۲۰۰ کاراکتر) "
+        "برای اسکرین‌شات این توییت پربازدید بنویس. لحن خودمانی ولی محترمانه. فقط بگو توییت درباره‌ی چیست "
+        "یا چرا دیده شده؛ چیزی از خودت به آن اضافه نکن، نظر سیاسی نده، کسی را مسخره نکن، هشتگ و ایموجی نگذار "
+        "و متن توییت را تکرار نکن. فقط خود کپشن را بنویس.\n\n"
+        f"نویسنده: {tw['name']} (@{tw['handle']})\nمتن توییت:\n{tw['text'][:1500]}"
+    )
+    base = "https://generativelanguage.googleapis.com/v1beta"
+    models = [m for m in (GEMINI_MODEL, "gemini-flash-latest", "gemini-flash-lite-latest") if m]
+    tried = set()
+    for attempt in range(2):
+        for model in models:
+            if model in tried:
+                continue
+            tried.add(model)
+            try:
+                r = requests.post(f"{base}/models/{model}:generateContent", params={"key": GEMINI_API_KEY},
+                                  json={"contents": [{"parts": [{"text": prompt}]}],
+                                        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 400}},
+                                  timeout=60)
+                if r.status_code == 200:
+                    parts = r.json()["candidates"][0]["content"]["parts"]
+                    text = " ".join(p.get("text", "") for p in parts).strip().strip('"«»')
+                    text = re.sub(r"#\S+", "", text).strip()
+                    if text:
+                        return text[:300]
+                print(f"gemini {model}: {r.status_code} {r.text[:200]}")
+            except Exception as ex:
+                print(f"gemini {model} failed: {ex!r}")
+        if attempt == 0:          # اسم مدل‌ها عوض می‌شود: یک مدل Flash موجود را از فهرست پیدا کن
+            try:
+                r = requests.get(f"{base}/models", params={"key": GEMINI_API_KEY}, timeout=30)
+                names = [m["name"].split("/", 1)[1] for m in r.json().get("models", [])
+                         if "generateContent" in m.get("supportedGenerationMethods", [])
+                         and "flash" in m["name"] and not re.search(r"image|tts|audio|live|preview|exp", m["name"])]
+                models = sorted(names, reverse=True)[:3]
+            except Exception as ex:
+                print(f"gemini list models failed: {ex!r}")
+                break
+    return ""
+
+
+def tweet_caption(tw, ai_text: str) -> str:
+    link = f"https://x.com/{tw['handle']}/status/{tw['id']}"
+    stats = []
+    if tw["views"]:
+        stats.append(f"👁 {fa_count(tw['views'])} بازدید")
+    if tw["likes"]:
+        stats.append(f"❤️ {fa_count(tw['likes'])}")
+    if tw["retweets"]:
+        stats.append(f"🔁 {fa_count(tw['retweets'])}")
+    parts = [f"<b>{TWEET_TAG}</b>"]
+    if ai_text:
+        parts.append(esc(ai_text))
+    parts.append(f'👤 {esc(tw["name"])} (<a href="{link}">@{esc(tw["handle"])}</a>)'
+                 + (f"\n{' · '.join(stats)}" if stats else ""))
+    parts.append(signature())
+    return "\n\n".join(p for p in parts if p)[:CAPTION_LIMIT]
+
+
+async def run_tweet_if_due(photo_send, state, seen, force=False):
+    if not tweets_enabled():
+        return
+    key = due_tweet_slot(state) or (f"test {int(time.time())}" if force else None)
+    if not key:
+        return
+    print(f"tweet slot {key}")
+    if not key.startswith("test"):
+        state["tweet_done"] = (state.get("tweet_done", []) + [key])[-20:]   # موفق یا ناموفق، تکرار نمی‌شود
+    save_state(state, seen)
+    ok = False
+    try:
+        posted = state.get("tweet_posted", [])
+        found = [t for t in await fetch_top_tweets() if t["id"] not in posted]
+        if not found:
+            print("tweets: nothing new")
+            return
+        for tw in found[:3]:                              # اگر اسکرین‌شات یکی نشد، بعدی
+            png = await screenshot_tweet(tw["id"])
+            if not png:
+                continue
+            ok = await photo_send(png, tweet_caption(tw, ai_caption(tw)))
+            if ok:
+                state["tweet_posted"] = (posted + [tw["id"]])[-300:]
+                state["last_post"] = time.time()
+                print(f"tweet posted: {tw['id']} ({tw['views']} views)")
+            break
+    except Exception as ex:
+        msg = str(ex)[:150]
+        hint = " (احتمالا کوکی X منقضی شده؛ X_AUTH_TOKEN و X_CT0 را تازه کن)" if re.search(
+            r"401|403|Unauthorized|Forbidden|auth", msg, re.I) else ""
+        report_error("tweets", f"توییت پربازدید ارسال نشد: {type(ex).__name__}: {msg}{hint}")
+        print(f"tweet slot failed: {ex!r}")
+    finally:
+        save_state(state, seen)
+    if not ok:
+        print(f"tweet slot {key}: not posted")
+
+
+def simple_photo_send(png, caption) -> bool:
+    return tg("sendPhoto", {"chat_id": CHANNEL_ID, "caption": caption, "parse_mode": "HTML"},
+              files={"photo": ("tweet.png", png, "image/png")})
+
+
 # ================================================================ PACED LOOP
 IDLE_CHECK_SEC = 60    # وقتی پست تازه‌ای نیست، هر چند ثانیه دوباره منابع چک شوند
 
@@ -1642,7 +1903,8 @@ def interval_min(now=None) -> float:
     return POST_INTERVAL_MIN
 
 
-async def paced_loop(collect, publish_one, state, seen, price_post=None, digest_send=None, morning_send=None):
+async def paced_loop(collect, publish_one, state, seen, price_post=None, digest_send=None, morning_send=None,
+                     photo_send=None):
     """
     تا RUN_MINUTES دقیقه کار می‌کند و هر interval_min() دقیقه (بسته به ساعت روز) فقط یک پست می‌فرستد.
     زمان آخرین ارسال در state ذخیره می‌شود تا فاصله بین اجراها هم رعایت شود.
@@ -1652,6 +1914,8 @@ async def paced_loop(collect, publish_one, state, seen, price_post=None, digest_
     deadline = time.time() + RUN_MINUTES * 60
     failed_ids = set()
     posted = failed = pending = 0
+    if photo_send and TEST_TWEET:              # اجرای دستی با test_tweet: همین حالا یک توییت پربازدید
+        await run_tweet_if_due(photo_send, state, seen, force=True)
 
     while True:
         interval = interval_min() * 60
@@ -1677,6 +1941,8 @@ async def paced_loop(collect, publish_one, state, seen, price_post=None, digest_
             await run_price_if_due(price_post, state, seen)
         if digest_send:
             await run_digest_if_due(digest_send, state, seen)
+        if photo_send:
+            await run_tweet_if_due(photo_send, state, seen)
         try:
             collected = await collect()
             source_ok("collect")
@@ -1844,11 +2110,19 @@ async def mt_main(sources, seen, first_run, state):
             await client.send_message(target, text, parse_mode="html", link_preview=False, silent=not loud)
             return True
 
+        async def photo_send(png, caption):
+            import io
+            f = io.BytesIO(png)
+            f.name = "tweet.png"
+            await client.send_file(target, f, caption=caption, parse_mode="html", silent=SILENT_POSTS)
+            return True
+
         if first_run:
             return mark_first_run(await collect(), seen)
         if SKIP_BACKLOG:
             skip_backlog(await collect(), seen, state)
-        return await paced_loop(collect, publish_one, state, seen, price_post, digest_send, morning_send)
+        return await paced_loop(collect, publish_one, state, seen, price_post, digest_send, morning_send,
+                                photo_send)
     finally:
         await client.disconnect()
 
@@ -1883,7 +2157,10 @@ async def simple_main(sources, seen, first_run, state):
     async def morning_send(sticker, text, loud=True):
         return simple_morning_send(sticker, text, loud)
 
-    return await paced_loop(collect, publish_one, state, seen, price_post, digest_send, morning_send)
+    async def photo_send(png, caption):
+        return simple_photo_send(png, caption)
+
+    return await paced_loop(collect, publish_one, state, seen, price_post, digest_send, morning_send, photo_send)
 
 
 # ---------------------------------------------------------------- main

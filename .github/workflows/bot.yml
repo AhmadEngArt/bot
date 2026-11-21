@@ -15,6 +15,10 @@ on:
         description: "رد کردن همه پست‌های در صف (بدون ارسال)"
         type: boolean
         default: false
+      test_tweet:
+        description: "همین حالا یک توییت پربازدید فارسی بفرست (تست)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -58,6 +62,12 @@ jobs:
           POST_INTERVAL_MIN: ${{ vars.POST_INTERVAL_MIN }}
           GOOGLE_SITE_VERIFICATION: ${{ vars.GOOGLE_SITE_VERIFICATION }}
           RUN_MINUTES: ${{ vars.RUN_MINUTES }}
+          X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
+          X_CT0: ${{ secrets.X_CT0 }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          TWEET_MIN_LIKES: ${{ vars.TWEET_MIN_LIKES }}
+          TEST_TWEET: ${{ github.event.inputs.test_tweet == 'true' && 'true' || '' }}
         run: python -u bot.py
 
       - name: Save state
