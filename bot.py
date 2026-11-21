@@ -588,7 +588,7 @@ LAST_WAS_GROUP = False
 # دکمه‌ی «ارسال برای دوستان» زیر هر پست: با یک لمس، پست برای دوست یا گروه فرستاده می‌شود
 SHARE_TEXT = "📢 ارسال برای دوستان"
 SHARE_BUTTON = False   # کاربر خواست دکمه زیر پست‌ها نباشد
-AUTO_REACTION = os.environ.get("AUTO_REACTION", "🔥")   # ری‌اکشن خودکار ربات روی هر پست؛ خالی = خاموش
+AUTO_REACTION = os.environ.get("AUTO_REACTION", "❤")   # ری‌اکشن خودکار ربات روی هر پست؛ خالی = خاموش
 
 
 def share_markup(post_id=None) -> dict:
