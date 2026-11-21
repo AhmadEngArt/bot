@@ -1,5 +1,4 @@
 [
-  {"name": "NE_WG", "type": "telegram", "channel": "NE_WG", "limit": 3, "tag": "🔴 خبر"},
   {"name": "KHODRO_AKHBAR", "type": "telegram", "channel": "KHODRO_AKHBAR", "limit": 3, "tag": "🚗 خودرو"},
   {"name": "naasheh_ir", "type": "telegram", "channel": "naasheh_ir", "limit": 3, "tag": "🔥 داغ"},
   {"name": "VahidOnline", "type": "telegram", "channel": "VahidOnline", "limit": 5, "tag": "🔴 خبر"},
