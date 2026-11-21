@@ -32,7 +32,7 @@ import shutil
 import sys
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -347,7 +347,7 @@ WELCOME_TEXT = (
     "👀 حاشیه | 😂 طنز | ⚽ ورزش\n"
     "💰 اقتصاد | 🚗 خودرو | 💜 دلنوشته\n\n"
     "🗓 <b>برنامه‌ی ثابت هر روز:</b>\n"
-    "☀️ ۷ صبح: صبح بخیر + یک جمله‌ی امید\n"
+    "☀️ ۶ صبح: صبح بخیر + یک جمله‌ی امید\n"
     "💵 ۹، ۱۲، ۱۷ و ۲۱: قیمت دلار\n"
     "📋 ۲۲ شب: مهم‌ترین‌های امروز\n\n"
     "🔔 نوتیفیکیشن رو روشن نگه دار.\n"
@@ -355,8 +355,17 @@ WELCOME_TEXT = (
 )
 
 
+WELCOME_REV = 2   # با تغییر متن خوش‌آمد بالا ببرید تا پست سنجاق‌شده ویرایش شود
+
+
 def apply_channel_profile(state):
     """فقط یک بار برای هر PROFILE_VERSION اجرا می‌شود (حالت Bot API)."""
+    if BOT_TOKEN and state.get("welcome_id") and state.get("welcome_rev", 1) != WELCOME_REV \
+            and state.get("profile_version") == PROFILE_VERSION:
+        ok = tg("editMessageText", {"chat_id": CHANNEL_ID, "message_id": state["welcome_id"], "text": WELCOME_TEXT,
+                                    "parse_mode": "HTML", "disable_web_page_preview": True})
+        state["welcome_rev"] = WELCOME_REV
+        print(f"welcome post edit: {'ok' if ok else 'failed'}")
     if not BOT_TOKEN or state.get("profile_version") == PROFILE_VERSION:
         return
     state["profile_version"] = PROFILE_VERSION
@@ -1300,7 +1309,8 @@ async def run_digest_if_due(send_text_fn, state, seen):
 # ================================================================ MORNING GREETING + QUIET HOUR
 # هر روز ساعت MORNING_TIME (تهران) یک استیکر «صبح بخیر» با تاریخ همان روز منتشر می‌شود
 # و تا QUIET_UNTIL هیچ پست دیگری گذاشته نمی‌شود.
-MORNING_TIME = "07:00"
+MORNING_TIME = "06:00"     # استیکر صبح بخیر (با صدا) و شروع سکوت
+HOPE_DELAY_MIN = 10        # جمله‌ی امیدوارکننده چند دقیقه بعد از صبح بخیر
 QUIET_UNTIL = "08:00"
 FONTS_DIR = BASE / "fonts"
 FA_WEEKDAYS = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
@@ -1485,7 +1495,8 @@ async def run_morning_if_due(morning_send, state, seen):
             report_error("morning", "ارسال استیکر صبح بخیر ناموفق بود.")
         print(f"morning {key}: {'posted' if ok else 'FAILED'}")
         save_state(state, seen)
-    if state.get("hope_done") != key:
+    hope_at = _today_at(MORNING_TIME, datetime.now(TEHRAN)) + timedelta(minutes=HOPE_DELAY_MIN)
+    if state.get("hope_done") != key and datetime.now(TEHRAN) >= hope_at:
         state["hope_done"] = key
         try:
             ok = await morning_send(None, hope_text(), False)
@@ -1920,6 +1931,8 @@ async def paced_loop(collect, publish_one, state, seen, price_post=None, digest_
     while True:
         interval = interval_min() * 60
         wait = state.get("last_post", 0) + interval - time.time()
+        if morning_send and in_quiet_hour():
+            wait = 0                           # در ساعت سکوت پستی نمی‌رود؛ دقیقه‌به‌دقیقه برای صبح بخیر/امید چک کن
         if wait > 0:
             if time.time() + wait > deadline:
                 break
