@@ -1888,11 +1888,18 @@ def ai_caption(text: str) -> str:
     for model in AI_MODELS:
         try:
             r = requests.post("https://models.github.ai/inference/chat/completions",
-                              headers={"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"},
-                              json={"model": model, "messages": msgs, "temperature": 0.8, "max_tokens": 200},
+                              headers={"Authorization": f"Bearer {GITHUB_TOKEN}", "Content-Type": "application/json",
+                                       "Accept": "application/json", "X-GitHub-Api-Version": "2022-11-28"},
+                              json={"model": model, "messages": msgs, "temperature": 0.8, "max_tokens": 200,
+                                    "stream": False},
                               timeout=60)
+            try:
+                data = r.json()
+            except ValueError:
+                print(f"ai caption {model}: {r.status_code} {r.headers.get('content-type')} {r.text[:300]!r}")
+                continue
             if r.status_code == 200:
-                out = r.json()["choices"][0]["message"]["content"].strip().strip('"«»')
+                out = data["choices"][0]["message"]["content"].strip().strip('"«»')
                 out = re.sub(r"#\S+", "", out).strip()
                 if out:
                     return out[:300]
