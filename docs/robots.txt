@@ -1,2 +1,4 @@
 User-agent: *
 Allow: /
+
+Sitemap: https://ahmadengart.github.io/bot/sitemap.xml
