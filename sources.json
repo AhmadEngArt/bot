@@ -6,7 +6,6 @@
   {"name": "KiriFutballl", "type": "telegram", "channel": "KiriFutballl", "limit": 3, "tag": "⚽ ورزش"},
   {"name": "periodi", "type": "telegram", "channel": "periodi", "limit": 3, "tag": "😂 طنز"},
   {"name": "hashieh", "type": "telegram", "channel": "hashieh", "limit": 3, "tag": "👀 حاشیه"},
-  {"name": "Jahan_Fouri", "type": "telegram", "channel": "Jahan_Fouri", "limit": 5, "tag": "🌐 خارجی"},
   {"name": "pe_az", "type": "telegram", "channel": "pe_az", "limit": 3, "tag": "💰 اقتصاد"},
   {"name": "DEL_ANGIZ_JAN", "type": "telegram", "channel": "DEL_ANGIZ_JAN", "limit": 3, "tag": "💜 دلنوشته"},
   {"name": "Hesse_Arammesh", "type": "telegram", "channel": "Hesse_Arammesh", "limit": 3, "tag": "💜 دلنوشته"},

@@ -155,6 +155,40 @@ def replace_channels(text: str) -> str:
     return text.strip()
 
 
+# اسم (نه آیدی) کانال مبدا که بعضی‌ها اول یا آخر پست می‌نویسند، مثل «… رسانه افشا ⭕️» یا «/جهان فوری»
+_NAME_DECOR = r"[^\w.!?،؛…»)\]\n<>@]*"
+
+
+def source_names(title: str, extra=()):
+    """از عنوان کانال (و فهرست strip در sources.json) اسم‌هایی که باید حذف شوند را می‌سازد."""
+    names = set()
+    for raw in [title or ""] + list(extra or ()):
+        for part in [raw] + re.split(r"[|│/\\\-–—_•·:()\[\]«»\"']+|[^\w\s‌]", raw):
+            part = re.sub(r"[^\w\s‌]", " ", part)
+            part = re.sub(r"\s+", " ", part).strip()
+            if len(part.replace(" ", "")) >= 4 and not part.isdigit():
+                names.add(part)
+    return sorted(names, key=len, reverse=True)
+
+
+def strip_source_names(text: str, names) -> str:
+    """اسم کانال مبدا را از ابتدا و انتهای متن و از خط‌هایی که فقط همان اسم‌اند حذف می‌کند."""
+    if not text or not names:
+        return text
+    for name in names:
+        words = [re.escape(w) for w in name.split()]
+        pat = r"[\s‌]*".join(words)
+        for _ in range(3):
+            new = re.sub(r"(?:^|(?<=\n))" + _NAME_DECOR + pat + _NAME_DECOR + r"(?=\n|$)", "", text)   # خط تنها
+            new = re.sub(r"\s*" + r"[/|\-–—:•]?" + _NAME_DECOR + pat + _NAME_DECOR + r"\s*$", "", new)  # انتها
+            new = re.sub(r"^\s*" + _NAME_DECOR + pat + r"[\s‌]*[|:\-–—•]+\s*", "", new)                # ابتدا: «اسم | …»
+            if new == text:
+                break
+            text = new
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 # نشانه‌های تبلیغ‌های شبکه‌های تبلیغاتی تلگرام
 AD_PATTERNS = [
     re.compile(r"#(?!(?:13|14|19|20)\d\d(?!\d))\d{4,7}(?!\d)"),   # کد تبلیغ مثل #28083 (سال‌ها مثل #1401 نه)
@@ -384,6 +418,8 @@ def fetch_telegram_channel(src):
     r = requests.get(f"https://t.me/s/{name}", headers=UA, timeout=TIMEOUT)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
+    title_el = soup.select_one(".tgme_channel_info_header_title")
+    names = source_names(title_el.get_text(" ", strip=True) if title_el else "", src.get("strip"))
     items = []
     wraps = soup.select(".tgme_widget_message_wrap")
     deep = bool(src.get("scan_back", False))
@@ -399,7 +435,7 @@ def fetch_telegram_channel(src):
         text = clean(text_el.get_text(" ", strip=True), 700) if text_el else ""
         if is_ad(text):
             continue
-        text = replace_channels(text)
+        text = strip_source_names(replace_channels(text), names)
         media = extract_media(msg)
         if has_missing_media(msg, media):
             # ویدیو/فایلی که صفحه‌ی وب تلگرام لینک دانلودش را نمی‌دهد (معمولا ویدیوی حجیم):
@@ -785,6 +821,11 @@ async def mt_fetch(client, src):
     # scan_back=true در sources.json: تبلیغ‌ها رد می‌شوند و تا رسیدن به limit پست سالم به عقب می‌رویم
     deep = bool(src.get("scan_back", False))
     msgs = await client.get_messages(peer, limit=limit * 4 + (10 if deep else 0))  # newest first
+    try:
+        title = getattr(await client.get_entity(peer), "title", "") or ""
+    except Exception:
+        title = ""
+    names = source_names(title, src.get("strip"))
     groups, order = {}, []
     for m in msgs:
         if m.action:
@@ -802,8 +843,8 @@ async def mt_fetch(client, src):
         body = next((m.text for m in grp if m.raw_text), "") or ""
         if is_ad(raw):
             continue
-        raw = replace_channels(raw)
-        body = replace_channels(body)
+        raw = strip_source_names(replace_channels(raw), names)
+        body = strip_source_names(replace_channels(body), names)
         media_msgs = [m for m in grp if (m.photo or m.document)]
         if not media_msgs and len(raw) < 20:
             continue
