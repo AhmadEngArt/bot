@@ -95,6 +95,14 @@ MAX_STATE_ITEMS = 5000
 
 # پخش تدریجی: هر چند دقیقه فقط یک پست (از تنظیمات Variables هم قابل تغییر است)
 POST_INTERVAL_MIN = float(os.environ.get("POST_INTERVAL_MIN") or 4)
+# فاصله‌ی پست‌ها بر اساس ساعت (وقت تهران): (از ساعت, تا ساعت, دقیقه)
+# اگر متغیر POST_INTERVAL_MIN در گیتهاب تنظیم شده باشد، همان عدد ثابت برای همه‌ی ساعت‌ها استفاده می‌شود.
+POST_SCHEDULE = [
+    (0, 7, 12),     # نیمه‌شب تا ۷ صبح: آرام
+    (8, 10, 4),     # اوج صبح
+    (10, 18, 5),    # طول روز
+    (18, 24, 4),    # اوج شب
+]
 RUN_MINUTES = float(os.environ.get("RUN_MINUTES") or 50)   # هر اجرا چند دقیقه کار کند
 MAX_FILE_BYTES = 49 * 1024 * 1024
 CAPTION_LIMIT = 1024
@@ -1510,19 +1518,30 @@ footer{{text-align:center;color:var(--sub);font-size:13px;padding:24px}}
 IDLE_CHECK_SEC = 60    # وقتی پست تازه‌ای نیست، هر چند ثانیه دوباره منابع چک شوند
 
 
+def interval_min(now=None) -> float:
+    """فاصله‌ی بین پست‌ها (دقیقه) برای همین ساعت."""
+    if os.environ.get("POST_INTERVAL_MIN"):
+        return POST_INTERVAL_MIN
+    h = (now or datetime.now(TEHRAN)).hour
+    for start, end, minutes in POST_SCHEDULE:
+        if start <= h < end:
+            return minutes
+    return POST_INTERVAL_MIN
+
+
 async def paced_loop(collect, publish_one, state, seen, price_post=None, digest_send=None, morning_send=None):
     """
-    تا RUN_MINUTES دقیقه کار می‌کند و هر POST_INTERVAL_MIN دقیقه فقط یک پست می‌فرستد.
+    تا RUN_MINUTES دقیقه کار می‌کند و هر interval_min() دقیقه (بسته به ساعت روز) فقط یک پست می‌فرستد.
     زمان آخرین ارسال در state ذخیره می‌شود تا فاصله بین اجراها هم رعایت شود.
     """
     import asyncio
 
     deadline = time.time() + RUN_MINUTES * 60
-    interval = POST_INTERVAL_MIN * 60
     failed_ids = set()
     posted = failed = pending = 0
 
     while True:
+        interval = interval_min() * 60
         wait = state.get("last_post", 0) + interval - time.time()
         if wait > 0:
             if time.time() + wait > deadline:
@@ -1776,7 +1795,7 @@ def main():
     crash = None
     if TEST_ALERT:
         report_error(f"test:{int(time.time())}", "تست: سیستم هشدار کار می‌کند ✅")
-    print(f"Pacing: 1 post every {POST_INTERVAL_MIN:g} min, running {RUN_MINUTES:g} min")
+    print(f"Pacing: 1 post every {interval_min():g} min now, running {RUN_MINUTES:g} min")
     try:
         if mtproto_enabled():
             print("Mode: full (MTProto)")
