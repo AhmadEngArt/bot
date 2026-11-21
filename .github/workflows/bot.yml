@@ -38,6 +38,10 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # کتابخانه‌ی چیدمان راست‌به‌چپ برای نوشتن فارسی روی استیکر صبح بخیر
+      - name: Text shaping library
+        run: ldconfig -p | grep -q libfribidi || (sudo apt-get update -qq && sudo apt-get install -y -qq libfribidi0)
+
       - name: Run bot
         id: bot
         timeout-minutes: 60

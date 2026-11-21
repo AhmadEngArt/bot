@@ -1167,6 +1167,132 @@ async def run_digest_if_due(send_text_fn, state, seen):
     save_state(state, seen)
 
 
+# ================================================================ MORNING GREETING + QUIET HOUR
+# هر روز ساعت MORNING_TIME (تهران) یک استیکر «صبح بخیر» با تاریخ همان روز منتشر می‌شود
+# و تا QUIET_UNTIL هیچ پست دیگری گذاشته نمی‌شود.
+MORNING_TIME = "07:00"
+QUIET_UNTIL = "08:00"
+FONTS_DIR = BASE / "fonts"
+FA_WEEKDAYS = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
+
+
+def _today_at(hhmm, now):
+    h, m = map(int, hhmm.split(":"))
+    return now.replace(hour=h, minute=m, second=0, microsecond=0)
+
+
+def in_quiet_hour(now=None) -> bool:
+    now = now or datetime.now(TEHRAN)
+    return _today_at(MORNING_TIME, now) <= now < _today_at(QUIET_UNTIL, now)
+
+
+def seconds_until_quiet(now=None):
+    """چند ثانیه تا شروع ساعت سکوت امروز مانده (اگر گذشته، None)."""
+    now = now or datetime.now(TEHRAN)
+    s = (_today_at(MORNING_TIME, now) - now).total_seconds()
+    return s if s > 0 else None
+
+
+def morning_due(state):
+    now = datetime.now(TEHRAN)
+    key = now.strftime("%Y-%m-%d")
+    if state.get("morning_done") == key or not in_quiet_hour(now):
+        return None
+    return key
+
+
+def date_fa(now=None) -> str:
+    now = now or datetime.now(TEHRAN)
+    jy, jm, jd = jalali(now.date())
+    return f"{FA_WEEKDAYS[now.weekday()]} {jd} {FA_MONTHS[jm - 1]} {jy}".translate(FA_DIGITS)
+
+
+def morning_text(now=None) -> str:
+    return f"☀️ <b>صبح بخیر</b>\n🗓 {date_fa(now)}\n\n{signature()}"
+
+
+def make_morning_sticker(now=None):
+    """استیکر ۵۱۲×۵۱۲ (WEBP شفاف) با «صبح بخیر» و تاریخ امروز. اگر نشد None."""
+    try:
+        import io
+        import math
+        from PIL import Image, ImageDraw, ImageFont, features
+        if not features.check("raqm"):          # بدون raqm حروف فارسی جدا جدا چاپ می‌شوند
+            print("morning sticker: raqm not available, sending text instead")
+            return None
+        now = now or datetime.now(TEHRAN)
+        jy, jm, jd = jalali(now.date())
+        S, k = 512, 2                             # بزرگ رسم می‌شود و بعد کوچک، برای لبه‌های نرم
+        W = S * k
+        img = Image.new("RGBA", (W, W), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        cx, cy, r = W // 2, int(W * 0.42), int(W * 0.28)
+        # پرتوهای خورشید
+        for i in range(16):
+            a = i * math.pi / 8
+            r1, r2, w = r + 14 * k, r + (56 if i % 2 == 0 else 38) * k, 0.11
+            pts = [(cx + r1 * math.cos(a - w), cy + r1 * math.sin(a - w)),
+                   (cx + r2 * math.cos(a), cy + r2 * math.sin(a)),
+                   (cx + r1 * math.cos(a + w), cy + r1 * math.sin(a + w))]
+            d.polygon(pts, fill=(255, 176, 0, 255))
+        # قرص خورشید با شیب رنگ
+        for i in range(r, 0, -2):
+            t = i / r
+            col = (255, int(212 - 40 * t), int(60 - 60 * t), 255)
+            d.ellipse((cx - i, cy - i, cx + i, cy + i), fill=col)
+        lalezar = ImageFont.truetype(str(FONTS_DIR / "Lalezar-Regular.ttf"), 112 * k)
+        vazir = ImageFont.truetype(str(FONTS_DIR / "Vazirmatn.ttf"), 34 * k)
+        try:
+            vazir.set_variation_by_name("Black")
+        except Exception:
+            pass
+        navy, yellow, white = (10, 26, 63, 255), (255, 212, 0, 255), (255, 255, 255, 255)
+        # «صبح بخیر» روی خورشید
+        d.text((cx, cy + 6 * k), "صبح بخیر", font=lalezar, fill=navy, anchor="mm",
+               direction="rtl", language="fa", stroke_width=9 * k, stroke_fill=white)
+        # نوار تاریخ
+        day_line = f"{FA_WEEKDAYS[now.weekday()]} {jd} {FA_MONTHS[jm - 1]} {jy}".translate(FA_DIGITS)
+        box = d.textbbox((0, 0), day_line, font=vazir, direction="rtl", language="fa")
+        tw = box[2] - box[0]
+        py = int(W * 0.84)
+        ph, pw = 46 * k, tw + 56 * k
+        d.rounded_rectangle((cx - pw // 2, py - ph // 2 - 4 * k, cx + pw // 2, py + ph // 2 + 4 * k),
+                            radius=ph // 2 + 4 * k, fill=navy, outline=white, width=5 * k)
+        d.text((cx, py), day_line, font=vazir, fill=yellow, anchor="mm", direction="rtl", language="fa")
+        img = img.resize((S, S), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, "WEBP", quality=92)
+        return buf.getvalue()
+    except Exception as ex:
+        print(f"morning sticker failed: {ex!r}")
+        return None
+
+
+async def run_morning_if_due(morning_send, state, seen):
+    key = morning_due(state)
+    if not key:
+        return
+    state["morning_done"] = key          # موفق یا ناموفق، امروز دوباره تکرار نمی‌شود
+    sticker = make_morning_sticker()
+    try:
+        ok = await morning_send(sticker, morning_text())
+    except Exception as ex:
+        ok = False
+        print(f"morning failed: {ex!r}")
+    if not ok:
+        report_error("morning", "ارسال استیکر صبح بخیر ناموفق بود.")
+    print(f"morning {key}: {'posted' if ok else 'FAILED'}")
+    save_state(state, seen)
+
+
+def simple_morning_send(sticker, text) -> bool:
+    if sticker and tg("sendSticker", {"chat_id": CHANNEL_ID, "emoji": "☀️"},
+                      files={"sticker": ("morning.webp", sticker, "image/webp")}):
+        return True
+    return tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML",
+                              "disable_web_page_preview": True})
+
+
 # ================================================================ WEBSITE (GitHub Pages)
 # هر اجرا صفحه‌ی docs/index.html را با آخرین پست‌ها می‌سازد؛ گیتهاب آن را رایگان منتشر می‌کند
 # (Settings → Pages → Branch: main، پوشه /docs) و گوگل ایندکسش می‌کند.
@@ -1260,7 +1386,7 @@ footer{{text-align:center;color:var(--sub);font-size:13px;padding:24px}}
 IDLE_CHECK_SEC = 60    # وقتی پست تازه‌ای نیست، هر چند ثانیه دوباره منابع چک شوند
 
 
-async def paced_loop(collect, publish_one, state, seen, price_post=None, digest_send=None):
+async def paced_loop(collect, publish_one, state, seen, price_post=None, digest_send=None, morning_send=None):
     """
     تا RUN_MINUTES دقیقه کار می‌کند و هر POST_INTERVAL_MIN دقیقه فقط یک پست می‌فرستد.
     زمان آخرین ارسال در state ذخیره می‌شود تا فاصله بین اجراها هم رعایت شود.
@@ -1277,8 +1403,19 @@ async def paced_loop(collect, publish_one, state, seen, price_post=None, digest_
         if wait > 0:
             if time.time() + wait > deadline:
                 break
+            to_quiet = seconds_until_quiet()
+            if morning_send and to_quiet is not None and to_quiet < wait:
+                wait = to_quiet + 1            # برای استیکر صبح بخیر سر ساعت بیدار شو
             print(f"waiting {int(wait)}s until next post")
             await asyncio.sleep(wait)
+
+        if morning_send:
+            await run_morning_if_due(morning_send, state, seen)
+        if in_quiet_hour():                    # ساعت سکوت صبح: هیچ پستی ارسال نمی‌شود
+            if time.time() + IDLE_CHECK_SEC > deadline:
+                break
+            await asyncio.sleep(IDLE_CHECK_SEC)
+            continue
 
         if price_post:
             await run_price_if_due(price_post, state, seen)
@@ -1432,11 +1569,27 @@ async def mt_main(sources, seen, first_run, state):
             await client.send_message(target, text, parse_mode="html", link_preview=False)
             return True
 
+        async def morning_send(sticker, text):
+            if sticker:
+                try:
+                    import io
+                    from telethon.tl.types import DocumentAttributeSticker, InputStickerSetEmpty
+                    f = io.BytesIO(sticker)
+                    f.name = "morning.webp"
+                    await client.send_file(target, f, mime_type="image/webp", force_document=False,
+                                           attributes=[DocumentAttributeSticker(alt="☀️",
+                                                                                stickerset=InputStickerSetEmpty())])
+                    return True
+                except Exception as ex:
+                    print(f"morning sticker send failed: {ex!r}")
+            await client.send_message(target, text, parse_mode="html", link_preview=False)
+            return True
+
         if first_run:
             return mark_first_run(await collect(), seen)
         if SKIP_BACKLOG:
             skip_backlog(await collect(), seen, state)
-        return await paced_loop(collect, publish_one, state, seen, price_post, digest_send)
+        return await paced_loop(collect, publish_one, state, seen, price_post, digest_send, morning_send)
     finally:
         await client.disconnect()
 
@@ -1466,7 +1619,10 @@ async def simple_main(sources, seen, first_run, state):
     remove_old_share_buttons(state)
     if SKIP_BACKLOG:
         skip_backlog(await collect(), seen, state)
-    return await paced_loop(collect, publish_one, state, seen, price_post, digest_send)
+    async def morning_send(sticker, text):
+        return simple_morning_send(sticker, text)
+
+    return await paced_loop(collect, publish_one, state, seen, price_post, digest_send, morning_send)
 
 
 # ---------------------------------------------------------------- main
