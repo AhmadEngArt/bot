@@ -56,6 +56,7 @@ jobs:
           TEST_ALERT: ${{ github.event.inputs.test_alert == 'true' && 'true' || vars.TEST_ALERT }}
           SKIP_BACKLOG: ${{ github.event.inputs.skip_backlog == 'true' && 'true' || '' }}
           POST_INTERVAL_MIN: ${{ vars.POST_INTERVAL_MIN }}
+          GOOGLE_SITE_VERIFICATION: ${{ vars.GOOGLE_SITE_VERIFICATION }}
           RUN_MINUTES: ${{ vars.RUN_MINUTES }}
         run: python -u bot.py
 

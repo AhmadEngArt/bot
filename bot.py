@@ -1510,12 +1510,20 @@ def site_add(state, it, src):
     state["site_posts"] = posts[-SITE_POSTS:]
 
 
+SITE_URL = "https://ahmadengart.github.io/bot/"
+SITE_DESCRIPTION = ("روزانه ۲۴ (@rooozane24): داغ‌ترین خبرها و حاشیه‌های ایران و جهان، طنز، ورزش، "
+                    "اقتصاد، قیمت دلار ۴ بار در روز و خلاصه‌ی مهم‌ترین‌های هر شب؛ کانال تلگرام روزانه ۲۴.")
+# کد تأیید Google Search Console (فقط مقدار content)؛ تا وقتی خالی است تگ گذاشته نمی‌شود
+GOOGLE_SITE_VERIFICATION = os.environ.get("GOOGLE_SITE_VERIFICATION", "")
+
+
 def write_site(state):
     try:
         handle = MY_CHANNEL.lstrip("@")
         link = f"https://t.me/{handle}"
         cards = []
-        for p in reversed(state.get("site_posts", [])):
+        state["site_posts"] = [p for p in state.get("site_posts", []) if not is_ad(p.get("s", ""))]
+        for p in reversed(state["site_posts"]):
             when = datetime.fromtimestamp(p["t"], TEHRAN).strftime("%H:%M").translate(FA_DIGITS)
             media = '<span class="m">🎬 تصویر/ویدیو در کانال</span>' if p.get("v") else ""
             cards.append(
@@ -1524,11 +1532,25 @@ def write_site(state):
                 f'<a class="r" href="{link}/{p["m"]}" rel="noopener">ادامه در تلگرام ←</a></article>')
         jy, jm, jd = jalali(datetime.now(TEHRAN).date())
         date_fa = f"{jd} {FA_MONTHS[jm - 1]} {jy}".translate(FA_DIGITS)
+        verify = (f'<meta name="google-site-verification" content="{esc(GOOGLE_SITE_VERIFICATION)}">'
+                  if GOOGLE_SITE_VERIFICATION else "")
+        ld = json.dumps({"@context": "https://schema.org", "@type": "NewsMediaOrganization",
+                         "name": SIGN_TEXT, "alternateName": ["Rooozane 24", "روزانه24", handle],
+                         "url": SITE_URL, "logo": SITE_URL + "logo.png", "sameAs": [link],
+                         "description": SITE_DESCRIPTION}, ensure_ascii=False)
         page = SITE_TEMPLATE.format(link=link, handle=handle, date=date_fa, cards="\n".join(cards),
-                                    title=f"{SIGN_TEXT} | {SIGN_SLOGAN}")
+                                    title=CHANNEL_TITLE, desc=SITE_DESCRIPTION, url=SITE_URL,
+                                    verify=verify, ld=ld, slogan=SIGN_SLOGAN,
+                                    iso=datetime.now(TEHRAN).isoformat(timespec="seconds"))
         SITE_DIR.mkdir(exist_ok=True)
         (SITE_DIR / "index.html").write_text(page, encoding="utf-8")
-        (SITE_DIR / "robots.txt").write_text("User-agent: *\nAllow: /\n", encoding="utf-8")
+        (SITE_DIR / "robots.txt").write_text(
+            f"User-agent: *\nAllow: /\n\nSitemap: {SITE_URL}sitemap.xml\n", encoding="utf-8")
+        (SITE_DIR / "sitemap.xml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+            f'  <url><loc>{SITE_URL}</loc><lastmod>{time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}</lastmod>'
+            '<changefreq>hourly</changefreq><priority>1.0</priority></url>\n</urlset>\n', encoding="utf-8")
     except Exception as ex:
         print(f"site write failed: {ex!r}")
 
@@ -1538,18 +1560,29 @@ SITE_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} — آخرین خبرهای امروز</title>
-<meta name="description" content="آخرین خبرهای فوری ایران و جهان، ورزش، اقتصاد و قیمت دلار؛ هر روز، هر ساعت در کانال تلگرام روزانه ۲۴.">
+<title>{title} | کانال تلگرام @{handle}</title>
+<meta name="description" content="{desc}">
+<link rel="canonical" href="{url}">
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
+<meta name="theme-color" content="#0A1A3F">
+{verify}
 <meta property="og:title" content="{title}">
-<meta property="og:description" content="خبر فوری ایران و جهان + قیمت دلار ۴ بار در روز. عضو کانال تلگرام شو.">
+<meta property="og:description" content="{desc}">
 <meta property="og:type" content="website">
+<meta property="og:url" content="{url}">
+<meta property="og:image" content="{url}og.jpg">
+<meta property="og:locale" content="fa_IR">
+<meta name="twitter:card" content="summary_large_image">
+<meta http-equiv="last-modified" content="{iso}">
+<script type="application/ld+json">{ld}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700;900&display=swap">
 <style>
 :root{{--bg:#F4F6F9;--card:#fff;--ink:#111827;--sub:#4B5563;--acc:#E3141B;--nav:#0A1A3F;--y:#FFD400}}
 *{{box-sizing:border-box}}body{{margin:0;font-family:Vazirmatn,Tahoma,sans-serif;background:var(--bg);color:var(--ink);line-height:1.9}}
 header{{background:var(--nav);color:#fff;padding:28px 16px 24px;text-align:center}}
-.logo{{display:inline-flex;width:72px;height:72px;border-radius:50%;background:var(--y);color:#111;font-weight:900;font-size:34px;align-items:center;justify-content:center}}
+.logo{{width:96px;height:96px;border-radius:50%;display:block;margin:0 auto;box-shadow:0 4px 18px rgba(0,0,0,.35)}}
 h1{{margin:10px 0 4px;font-size:26px;font-weight:900}}header p{{margin:0;color:#CBD5E1}}
 .join{{display:inline-block;margin-top:16px;background:var(--acc);color:#fff;text-decoration:none;font-weight:900;font-size:18px;padding:12px 28px;border-radius:999px}}
 .join:hover{{background:#B70F15}}
@@ -1565,15 +1598,15 @@ footer{{text-align:center;color:var(--sub);font-size:13px;padding:24px}}
 </head>
 <body>
 <header>
-<div class="logo" aria-hidden="true">۲۴</div>
-<h1>روزانه ۲۴</h1>
-<p>خبر فوری ایران و جهان · ورزش · اقتصاد · قیمت دلار ۴ بار در روز</p>
+<img class="logo" src="logo.png" width="96" height="96" alt="لوگوی کانال روزانه ۲۴">
+<h1>روزانه ۲۴ | داغ‌ترین‌های روز</h1>
+<p>{slogan} · قیمت دلار ۴ بار در روز</p>
 <a class="join" href="{link}">📡 عضویت در کانال تلگرام</a>
 </header>
 <main>
 <div class="d">آخرین خبرها · به‌روزرسانی: {date}</div>
 {cards}
-<div class="cta"><b>همه‌ی خبرها، زودتر از همه، در تلگرام</b><br><a class="join" href="{link}">عضویت در <bdi dir="ltr">@{handle}</bdi></a></div>
+<div class="cta"><b>همه‌ی داغ‌ترین‌ها، زودتر از همه، در تلگرام</b><br><a class="join" href="{link}">عضویت در <bdi dir="ltr">@{handle}</bdi></a></div>
 </main>
 <footer>روزانه ۲۴ · <a href="{link}" dir="ltr">t.me/{handle}</a></footer>
 </body>
