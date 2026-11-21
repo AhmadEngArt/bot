@@ -249,7 +249,8 @@ def ad_score(t: str) -> int:
     score += 2 if re.search(r"کانالش|کانالا(?![\w])|کانال‌ها رو|عضو کانال", t) else 0
     # «پرسودترین/بهترین کانال …» و «کانال … اینجاست»
     score += 3 if re.search(r"ترین[\s\u200c]+کانال", t) else 0
-    score += 3 if re.search(r"کانال[^\n.!؟?]{0,40}اینجاست", t) else 0
+    score += 3 if ("اینجاست" in t and re.search(r"کانال", t)) else 0   # «کانالای زیادی دیدم … اینجاست»
+    score += 2 if re.search(r"تنها جایی که|تنها کانالی که|هر چی بخوای", t) else 0
     if re.search(r"(?:t\.me|telegram\.me)/[A-Za-z]\w{3,}(?!/\d)", t):   # لینک به یک کانال (نه یک پست)
         score += 2
     if re.search(r"(?<![\w.])@\s?[A-Za-z]\w{3,}", t):
