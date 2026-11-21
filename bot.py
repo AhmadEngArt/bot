@@ -104,7 +104,7 @@ POST_SCHEDULE = [
     (18, 24, 10),   # اوج شب
 ]
 # پست‌های عادی بی‌صدا ارسال می‌شوند (بدون زنگ نوتیفیکیشن برای اعضا).
-# صبح بخیر، قیمت دلار، خلاصه‌ی شبانه و پست خوش‌آمد با صدا می‌روند.
+# فقط استیکر صبح بخیر با صدا می‌رود.
 SILENT_POSTS = True
 _SEND_METHODS = ("sendMessage", "sendPhoto", "sendVideo", "sendAnimation", "sendAudio", "sendVoice",
                  "sendDocument", "sendMediaGroup", "sendSticker", "sendVideoNote")
@@ -363,7 +363,6 @@ def apply_channel_profile(state):
     if not tg("setChatDescription", {"chat_id": CHANNEL_ID, "description": CHANNEL_DESCRIPTION}):
         failed.append("توضیح کانال")
     res = tg_call("sendMessage", {"chat_id": CHANNEL_ID, "text": WELCOME_TEXT, "parse_mode": "HTML",
-                                  "disable_notification": False,
                                   "disable_web_page_preview": True})
     if res and res.get("message_id"):
         mid = res["message_id"]
@@ -1151,7 +1150,7 @@ def simple_price_post(state, key) -> bool:
     if not it:
         report_error("price", f"پست قیمت ساعت {key.split(' ')[1]} ارسال نشد: قیمت تازه‌ای در @{PRICE_CHANNEL} پیدا نشد.")
         return False
-    msg = tg_call("sendMessage", {"chat_id": CHANNEL_ID, "disable_notification": False,
+    msg = tg_call("sendMessage", {"chat_id": CHANNEL_ID,
                                   "text": price_text(esc(it["summary"]), key),
                                   "parse_mode": "HTML", "disable_web_page_preview": True,
                                   **({"reply_markup": share_markup()} if SHARE_BUTTON else {})})
@@ -1488,7 +1487,7 @@ async def run_morning_if_due(morning_send, state, seen):
     if state.get("hope_done") != key:
         state["hope_done"] = key
         try:
-            ok = await morning_send(None, hope_text())
+            ok = await morning_send(None, hope_text(), False)
         except Exception as ex:
             ok = False
             print(f"hope failed: {ex!r}")
@@ -1498,11 +1497,11 @@ async def run_morning_if_due(morning_send, state, seen):
         save_state(state, seen)
 
 
-def simple_morning_send(sticker, text) -> bool:
+def simple_morning_send(sticker, text, loud=True) -> bool:
     if sticker and tg("sendSticker", {"chat_id": CHANNEL_ID, "emoji": "☀️", "disable_notification": False},
                       files={"sticker": ("morning.webp", sticker, "image/webp")}):
         return True
-    return tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML", "disable_notification": False,
+    return tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML", "disable_notification": not loud,
                               "disable_web_page_preview": True})
 
 
@@ -1795,7 +1794,7 @@ async def mt_main(sources, seen, first_run, state):
                 report_error("price", f"پست قیمت ساعت {key.split(' ')[1]} ارسال نشد: قیمت تازه‌ای در @{PRICE_CHANNEL} پیدا نشد.")
                 return False
             msg = await client.send_message(target, price_text(it.get("html") or esc(it["summary"]), key),
-                                            parse_mode="html", link_preview=False)
+                                            parse_mode="html", link_preview=False, silent=SILENT_POSTS)
 
             async def pin(mid):
                 try:
@@ -1826,10 +1825,10 @@ async def mt_main(sources, seen, first_run, state):
             return True
 
         async def digest_send(text):
-            await client.send_message(target, text, parse_mode="html", link_preview=False)
+            await client.send_message(target, text, parse_mode="html", link_preview=False, silent=SILENT_POSTS)
             return True
 
-        async def morning_send(sticker, text):
+        async def morning_send(sticker, text, loud=True):
             if sticker:
                 try:
                     import io
@@ -1842,7 +1841,7 @@ async def mt_main(sources, seen, first_run, state):
                     return True
                 except Exception as ex:
                     print(f"morning sticker send failed: {ex!r}")
-            await client.send_message(target, text, parse_mode="html", link_preview=False)
+            await client.send_message(target, text, parse_mode="html", link_preview=False, silent=not loud)
             return True
 
         if first_run:
@@ -1872,7 +1871,7 @@ async def simple_main(sources, seen, first_run, state):
         return simple_price_post(state, key)
 
     async def digest_send(text):
-        return tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML", "disable_notification": False,
+        return tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML",
                                   "disable_web_page_preview": True,
                                   **({"reply_markup": share_markup()} if SHARE_BUTTON else {})})
 
@@ -1881,8 +1880,8 @@ async def simple_main(sources, seen, first_run, state):
     remove_old_share_buttons(state)
     if SKIP_BACKLOG:
         skip_backlog(await collect(), seen, state)
-    async def morning_send(sticker, text):
-        return simple_morning_send(sticker, text)
+    async def morning_send(sticker, text, loud=True):
+        return simple_morning_send(sticker, text, loud)
 
     return await paced_loop(collect, publish_one, state, seen, price_post, digest_send, morning_send)
 
